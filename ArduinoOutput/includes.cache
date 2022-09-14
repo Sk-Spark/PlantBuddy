@@ -1,0 +1,192 @@
+[
+  {
+    "Sourcefile": null,
+    "Include": "",
+    "Includepath": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\cores\\esp8266"
+  },
+  {
+    "Sourcefile": null,
+    "Include": "",
+    "Includepath": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\variants\\nodemcu"
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\PlantBuddy.ino.cpp",
+    "Include": "ESP8266WiFi.h",
+    "Includepath": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src"
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\PlantBuddy.ino.cpp",
+    "Include": "DHT.h",
+    "Includepath": "C:\\Users\\shuku\\Documents\\Arduino\\libraries\\DHT_sensor_library"
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\PlantBuddy.ino.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\arduino\\PubSubClient.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\arduino\\comms.cpp",
+    "Include": "SPI.h",
+    "Includepath": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\SPI"
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\arduino\\comms.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\arduino\\iotc.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\common\\base64.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\common\\iotc_common.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\common\\iotc_internal.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\common\\iotc_json.c",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\common\\jsmn.c",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\common\\sha256.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "c:\\Users\\shuku\\spark\\PlantBuddy\\ArduinoOutput\\sketch\\src\\iotc\\common\\string_buffer.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\BearSSLHelpers.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\CertStoreBearSSL.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFi.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFiAP.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFiGeneric.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFiGratuitous.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFiMulti.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFiSTA-WPS.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFiSTA.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\ESP8266WiFiScan.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\WiFiClient.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\WiFiClientSecureAxTLS.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\WiFiClientSecureBearSSL.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\WiFiServer.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\WiFiServerSecureAxTLS.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\WiFiServerSecureBearSSL.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\ESP8266WiFi\\src\\WiFiUdp.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\Documents\\Arduino\\libraries\\DHT_sensor_library\\DHT.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\Documents\\Arduino\\libraries\\DHT_sensor_library\\DHT_U.cpp",
+    "Include": "Adafruit_Sensor.h",
+    "Includepath": "C:\\Users\\shuku\\Documents\\Arduino\\libraries\\Adafruit_Unified_Sensor"
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\Documents\\Arduino\\libraries\\DHT_sensor_library\\DHT_U.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.7.4\\libraries\\SPI\\SPI.cpp",
+    "Include": "",
+    "Includepath": null
+  },
+  {
+    "Sourcefile": "C:\\Users\\shuku\\Documents\\Arduino\\libraries\\Adafruit_Unified_Sensor\\Adafruit_Sensor.cpp",
+    "Include": "",
+    "Includepath": null
+  }
+]

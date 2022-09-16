@@ -22,6 +22,7 @@ DHT dht(DHTPIN, DHTTYPE);
 
 int moisture_Pin= 0; // Soil Moisture Sensor input at Analog PIN A0
 int moisture_value= 0;
+int LOG_INTERVAL = 30000; // send telemetry every 30 seconds = 10000 * 3
 
 void on_event(IOTContext ctx, IOTCallbackInfo* callbackInfo);
 #include "src/connection.h"
@@ -65,32 +66,27 @@ void setup() {
 }
 
 void loop() {
-
   float h = dht.readHumidity();
   float t = dht.readTemperature();
   moisture_value= analogRead(moisture_Pin);
-  // moisture_value= 5675;
   moisture_value= moisture_value/10;
+  moisture_value= map(moisture_value,60, 102, 100, 1);
   
   if (isConnected) {
-
     unsigned long ms = millis();
-    if (ms - lastTick > 10000) {  // send telemetry every 10 seconds      
+    if (ms - lastTick > LOG_INTERVAL) {  // send telemetry every 10 seconds      
             
       char msg[64] = {0};
       int pos = 0, errorCode = 0;
 
       lastTick = ms;
       if (loopId++ % 2 == 0) {  // send telemetry
-        pos = snprintf(msg, sizeof(msg) - 1, "{\"Temperature\": %f, \"Humidity\":%f}", t, h);
+        pos = snprintf(msg, sizeof(msg) - 1, "{\"Temperature\": %f, \"Humidity\":%f, \"Moisture\":%i}", t, h, moisture_value);
         errorCode = iotc_send_telemetry(context, msg, pos);
         
-        pos = snprintf(msg, sizeof(msg) - 1, "{\"Moisture\":%i}", moisture_value);
-        errorCode = iotc_send_telemetry(context, msg, pos);
-          
-        // pos = snprintf(msg, sizeof(msg) - 1, "{\"Humidity\":89}", h);
+        // pos = snprintf(msg, sizeof(msg) - 1, "", moisture_value);
         // errorCode = iotc_send_telemetry(context, msg, pos);
-
+          
       } else {  // send property
         
       } 
@@ -108,5 +104,5 @@ void loop() {
     context = NULL;
     connect_client(SCOPE_ID, DEVICE_ID, DEVICE_KEY);
   }
-  // yield();
+  delay(10000); // delay for 10 seconds
 }

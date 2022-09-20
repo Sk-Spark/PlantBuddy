@@ -344,12 +344,6 @@ static void establishConnection()
   (void)initializeMqttClient();
 }
 
-// static void LoggInfo(char * msg, ...){
-//   // char msg[24] = {0};
-//   snprintf(msg, sizeof(msg)-1,"Pump: %i", ...);
-//   Logger.Info(msg);
-// }
-
 static void getTelemetryPayload(az_span payload, az_span* out_payload)
 {
   az_span original_payload = payload;
@@ -387,7 +381,7 @@ static void getTelemetryPayload(az_span payload, az_span* out_payload)
   // payload = az_span_copy_u8(payload, '\0');
 
   char msg[100] = {0};
-  snprintf(msg, sizeof(msg)-1, "{ \"timeStamp\": \"%s\", \"temperature\": %d, \"humidity\": %d, \"pot1_moisture\": %d% }", time_str1, temp, humidity, pot1_moisture);
+  snprintf(msg, sizeof(msg)-1, "{ \"time\": \"%s\", \"temp\": %d, \"humidity\": %d, \"pump\": %d, \"pot1\": %d }", time_str1, temp, humidity, run_pump1, pot1_moisture);
   payload = az_span_copy(payload, az_span_create_from_str(msg) );
   payload = az_span_copy_u8(payload, '\0');
 
@@ -472,7 +466,7 @@ void setup()
   digitalWrite(STATUS_LED_PIN, LOW);
 
   pinMode(PUMP1_pin, OUTPUT);
-  digitalWrite(PUMP1_pin, LOW);
+  digitalWrite(PUMP1_pin, HIGH);
 
   establishConnection();
 }

@@ -12,6 +12,24 @@ body {
   justify-content: space-between;
 }
 
+.header-left {
+  align-self: center;
+  width: 33%;
+  text-align: left;
+}
+
+.header-center {
+  align-self: center;
+  width: 33%;
+  text-align: center;
+}
+
+.header-right {
+  align-self: center;
+  width: 33%;
+  text-align: right;
+}
+
 a {
   color: #00B7FF;
 }

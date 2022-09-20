@@ -3,5 +3,5 @@
     "board": "esp32:esp32:esp32",
     "sketch": "Azure_IoT_Hub_ESP32\\Azure_IoT_Hub_ESP32.ino",
     "port": "COM4",
-    "output": "./ArduinoOutput"
+    "output": "./Azure_IoT_Hub_ESP32/ArduinoOutput"
 }

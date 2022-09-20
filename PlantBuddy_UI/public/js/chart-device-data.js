@@ -61,7 +61,7 @@ $(document).ready(() => {
       {
         fill: false,
         yAxisId: 'yAxis',
-        label: 'Temperature',
+        label: 'Temperature(°C)',
         borderColor: 'rgba(255, 204, 0, 1)',
         pointBoarderColor: 'rgba(255, 204, 0, 1)',
         backgroundColor: 'rgba(255, 204, 0, 0.4)',
@@ -72,7 +72,7 @@ $(document).ready(() => {
       {
         fill: false,
         yAxisId: 'yAxis',
-        label: 'Humidity',
+        label: 'Humidity(%)',
         borderColor: 'rgba(24, 120, 240, 1)',
         pointBoarderColor: 'rgba(24, 120, 240, 1)',
         backgroundColor: 'rgba(24, 120, 240, 0.4)',
@@ -83,7 +83,7 @@ $(document).ready(() => {
       {
         fill: false,
         yAxisId: 'yAxis',
-        label: 'Moisture',
+        label: 'Moisture(%)',
         borderColor: 'rgba(11, 156, 49, 1)',
         pointBoarderColor: 'rgba(11, 156, 49, 1)',
         backgroundColor: 'rgba(11, 156, 49, 0.6)',
@@ -93,38 +93,7 @@ $(document).ready(() => {
       }
     ]
   };
-
-  // const chartOptions = {
-  //   scales: {
-  //     yAxes: [{
-  //       id: 'Temperature',
-  //       type: 'linear',
-  //       scaleLabel: {
-  //         labelString: 'Temperature (ºC)',
-  //         display: true,
-  //       },
-  //       position: 'left',
-  //     },
-  //     {
-  //       id: 'Humidity',
-  //       type: 'linear',
-  //       scaleLabel: {
-  //         labelString: 'Humidity (%)',
-  //         display: true,
-  //       },
-  //       position: 'left',
-  //     },
-  //     {
-  //       id: 'Moisture',
-  //       type: 'linear',
-  //       scaleLabel: {
-  //         labelString: 'Moisture (%)',
-  //         display: true,
-  //       },
-  //       position: 'left',
-  //     }]
-  //   }
-  // };
+ 
 
   // Get the context of the canvas element we want to select
   const ctx = document.getElementById('iotChart').getContext('2d');
@@ -134,6 +103,7 @@ $(document).ready(() => {
       type: 'line',
       data: chartData,
       options: {
+     
         responsive: true,
         plugins: {
           legend: {

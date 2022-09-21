@@ -46,16 +46,19 @@ server.listen(process.env.PORT || '3000', () => {
 });
 
 const eventHubReader = new EventHubReader(iotHubConnectionString, eventHubConsumerGroup);
-
+let isFirstTime = true;
+console.log('isFirstTime',isFirstTime);
 (async () => {
-  await eventHubReader.startReadMessage((message, date, deviceId) => {
+  await eventHubReader.startReadMessage(isFirstTime,(message, date, deviceId) => {
+    isFirstTime = false;
+    console.log('isFirstTime',isFirstTime);
     try {
       const payload = {
         IotData: message,
         MessageDate: date || Date.now().toISOString(),
         DeviceId: deviceId,
       };
-      console.log(payload);
+     console.log(payload);
       wss.broadcast(JSON.stringify(payload));
     } catch (err) {
       console.error('Error broadcasting: [%s] from [%s].', err, message);

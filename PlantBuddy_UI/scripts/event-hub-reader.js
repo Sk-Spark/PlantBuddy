@@ -11,8 +11,10 @@ class EventHubReader {
     this.consumerGroup = consumerGroup;
   }
 
-  async startReadMessage(startReadMessageCallback) {
+  async startReadMessage(isFirstTime,startReadMessageCallback) {
     try {
+      const options = isFirstTime ? {maxWaitTimeInSeconds:30}: null;
+      console.log('options',options);
       const eventHubConnectionString = await convertIotHubToEventHubsConnectionString(this.iotHubConnectionString);
       const consumerClient = new EventHubConsumerClient(this.consumerGroup, eventHubConnectionString);
       console.log('Successfully created the EventHubConsumerClient from IoT Hub event hub-compatible connection string.');

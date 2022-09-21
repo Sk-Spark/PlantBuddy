@@ -492,7 +492,7 @@ ul.social_icon li a:hover {
      position: absolute;
      content: "";
      bottom: 0%;
-     background: url(../images/slin.png);
+    
      background-repeat: no-repeat;
      max-width: 820px;
      height: 147px;
@@ -589,7 +589,7 @@ ul.social_icon li a:hover {
 
 .pricing {
      background-color: #fff;
-     padding: 90px 0 170px 0;
+     padding: 30px 0 0 0;
      position: relative;
 }
 
@@ -652,7 +652,7 @@ ul.social_icon li a:hover {
 }
 
 .mar_top {
-     margin-top: -20px !important;
+     margin-top: -95px !important;
      margin: 0 auto;
      display: block;
      max-width: 142px;

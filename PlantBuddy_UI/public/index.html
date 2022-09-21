@@ -69,8 +69,8 @@
                         </div>
                      </div>
                   </div>
-                  <div class="col-xl-7 col-lg-9 col-md-9 col-sm-9" style="display:flex;flex-direction:row-reverse">
-                    <span class="read_more" style="margin-left: 15px;">NEW POT</span>
+                  <div class="col-xl-9 col-lg-9 col-md-9 col-sm-9" style="display:flex;flex-direction:row-reverse">
+                    <button data-toggle="modal" data-target="#popup" class="read_more" style="margin-left: 15px;"><span>POT</span></button> 
                     <span class="read_more">PROFILE</span>
                   </div>
                   
@@ -78,18 +78,81 @@
             </div>
          </div>
       </header>
-    <div style="background-color:rgb(117, 218, 117);padding:5px"><img src='icon/info.png' style="height: 30px;
+      <div style="background-color:rgb(117, 218, 117);padding:5px"><img src='icon/info.png' style="height: 30px;
         width: 30px;"/> The plants are well watered and need no attention.</div>
-      <!-- end about -->
-      <!-- our pricing -->
-      <div  class="pricing slin">
-         <div class="container">
-            <div class="row">
-               <div class="col-md-12">
-                  
-               </div>
+    </div>
+</div>
+</div>
+</header>
+
+<!-- Popup form for new pot -->
+<div id="popup" class="modal">
+<div class="modal-dialog">
+<div class="modal-content">
+    <div class="modal-header" style="align-items: center;">
+        <p> Add a new Pot </p>
+    </div>
+    <div class="modal-body">
+        <div class="row">
+            <div class="col-md-6 offset-md-3">
+                <form id="request" class="main_form">
+                    <div class="row">
+                        <div class="col-md-12 ">
+                            <input class="contactus" placeholder="Name of the Plant" type="type" name="Name"> 
+                        </div>
+                        <div class="col-md-12" style="margin-bottom: 10px;">
+                            <div class="textlabel">Type of the Plant </div>
+                            <input type="radio" name="type" value="Indoor"> <label>Indoor</label>
+                            <input type="radio" name="type" value="Outdoor"> <label>Outdoor</label> 
+                        </div>
+                        <div class="col-md-12" style="margin-bottom: 10px;">
+                            <div class="textlabel">Sensor Number</div>
+                            <select class="contactus" id = "myList" onchange = "sensorValue()" >  
+                                <option> Sensor Number </option>  
+                                <option> 1 </option>  
+                                <option> 2 </option>  
+                                <option> 3 </option>  
+                            </select>                            
+                        </div>
+                        <div class="col-md-12" style="margin-bottom: 10px;">
+                            <div class="textlabel">Threshold</div>
+                            <select class="contactus" id = "myList" onchange = "thresholdValue()" >  
+                                <option> % Threshold </option>  
+                                <option> 5% </option><option> 10% </option><option> 15% </option>  
+                                <option> 20% </option><option> 25% </option><option> 30% </option>  
+                                <option> 35% </option><option> 40% </option><option> 45% </option>  
+                                <option> 50% </option><option> 55% </option><option> 60% </option>  
+                                <option> 65% </option><option> 70% </option><option> 75% </option>  
+                                <option> 80% </option><option> 85% </option><option> 90% </option>  
+                                <option> 95% </option><option> 100% </option>  
+                            </select>                            
+                        </div>
+                        
+                    </div>
+                </form>
             </div>
-            <div class="row">
+        </div>
+    </div>
+    <div class="modal-footer">
+        <div class="col-md-12">
+            <button class="btn btn-primary">Add</button>
+            <button class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+        </div>
+    </div>
+</div>
+</div>
+</div>
+
+<!-- end about -->
+<!-- our pricing -->
+<div  class="pricing slin">
+<div class="container">
+<div class="row">
+   <div class="col-md-12">
+      
+   </div>
+</div>
+<div class="row">
                <div class="col-md-4">
                   <div class="pricing_box">
                     <a class="read_more mar_top" href="Javascript:void(0)">Status</a>
@@ -152,13 +215,6 @@
                </div>
                <div class="col-md-8">
                   <div class="pricing_box">
-                    <a class="read_more mar_top" href="Javascript:void(0)">Track your Plant </a>
-                    <span style="display:flex;flex-direction:row-reverse">
-                        <span id="deviceCount">0 devices</span>
-                        <select id="listOfDevices" class="select_box"></select>
-                    </span>
-                  <br/><br/>
-                    
                     <canvas id="iotChart"></canvas>
                    </div>
 
@@ -179,6 +235,12 @@
       <!-- sidebar -->
       <script src="js/jquery.mCustomScrollbar.concat.min.js"></script>
       <script src="js/custom.js"></script>
+      <script>  
+        function sensorValue() {  
+        var mylist = document.getElementById("myList");  
+        document.getElementById("sensor").value = mylist.options[mylist.selectedIndex].text;  
+        }  
+      </script>  
    </body>
 </html>
 

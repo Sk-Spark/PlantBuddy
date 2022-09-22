@@ -51,13 +51,26 @@
 
 #endif // IOT_CONFIG_USE_X509_CERT
 
-// Azure IoT
-#define IOT_CONFIG_IOTHUB_FQDN "POC-Hub-sk.azure-devices.net"
-#define IOT_CONFIG_DEVICE_ID "esp-32-plants-buddy"
+// Azure IoT Central
+#define DPS_ID_SCOPE                      "0ne00764250"
+#define IOT_CONFIG_DEVICE_ID              "Esp8266-test-device"
 // Use device key if not using certificates
 #ifndef IOT_CONFIG_USE_X509_CERT
-  #define IOT_CONFIG_DEVICE_KEY "owlttTjf8Y/HNUiOvwVwi49NXvCkIFrAl7ZVmdb1j2s="
-#endif  // IOT_CONFIG_USE_X509_CERT
+  #define IOT_CONFIG_DEVICE_KEY             "L/rxF75eNGYXfhIJl4GPLFrp2HU/nNm17dKk60eyx5E="
+#endif // IOT_CONFIG_USE_X509_CERT
 
-// Publish 1 message every 2 seconds
-#define TELEMETRY_FREQUENCY_MILLISECS 10000 // 10 seconds
+
+// User-agent (url-encoded) provided by the MQTT client to Azure IoT Services.
+// When developing for your own Arduino-based platform,
+// please update the suffix with the format '(ard;<platform>)' as an url-encoded string.
+#define AZURE_SDK_CLIENT_USER_AGENT       "c%2F" AZ_SDK_VERSION_STRING "(ard%3Besp32)"
+
+// Publish 1 message every 2 seconds.
+#define TELEMETRY_FREQUENCY_IN_SECONDS    10
+
+// For how long the MQTT password (SAS token) is valid, in minutes.
+// After that, the sample automatically generates a new password and re-connects.
+#define MQTT_PASSWORD_LIFETIME_IN_MINUTES 60
+
+// For watering pump
+#define PUMP_RUN_DURATION_IN_SECONDS 30

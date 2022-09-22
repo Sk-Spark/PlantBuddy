@@ -42,6 +42,8 @@
 
 #include <DHT.h>
 
+#include <Preferences.h> //https://github.com/espressif/arduino-esp32/tree/master/libraries/Preferences
+
 /* --- DHT Sensor --- */
 #define DHTTYPE DHT11   // DHT 11
 #define DHTPIN 4 
@@ -56,12 +58,12 @@ DHT dht(DHTPIN, DHTTYPE);
 #define STATUS_LED_PIN 5
 
 // Pump run duration
-#define PUMP_RUN_DURATION_IN_MILLISECS 5000 // 5 seconds
+#define DEFAULT_PUMP_RUN_DURATION_IN_MILLISECS 5000 // 5 seconds
 
 // For Pot 1
 #define POT1_PIN 34
 #define PUMP1_pin 18
-#define POT1_MOISTURE_THRESHOLD 50 // Pot1 moisture threshold
+#define DEFAULT_POT1_MOISTURE_THRESHOLD 50 // Pot1 moisture threshold
 static bool run_pump1 = false;
 static unsigned long pump1_ran_at = 0;
 
@@ -83,6 +85,8 @@ static unsigned long pump1_ran_at = 0;
 #define GMT_OFFSET_SECS (PST_TIME_ZONE * 3600)
 #define GMT_OFFSET_SECS_DST ((PST_TIME_ZONE + PST_TIME_ZONE_DAYLIGHT_SAVINGS_DIFF) * 3600)
 
+#define TELEMETRY_PAYLOAD_SIZE 200
+
 // Translate iot_configs.h defines into variables used by the sample
 static const char* ssid = IOT_CONFIG_WIFI_SSID;
 static const char* password = IOT_CONFIG_WIFI_PASSWORD;
@@ -101,7 +105,7 @@ static char mqtt_password[200];
 static uint8_t sas_signature_buffer[256];
 static unsigned long next_telemetry_send_time_ms = 0;
 static char telemetry_topic[128];
-static uint8_t telemetry_payload[100];
+static uint8_t telemetry_payload[TELEMETRY_PAYLOAD_SIZE];
 static uint32_t telemetry_send_count = 0;
 
 #define INCOMING_DATA_BUFFER_SIZE 128
@@ -115,6 +119,8 @@ static AzIoTSasToken sasToken(
     AZ_SPAN_FROM_BUFFER(sas_signature_buffer),
     AZ_SPAN_FROM_BUFFER(mqtt_password));
 #endif // IOT_CONFIG_USE_X509_CERT
+
+static Preferences preferences;
 
 static void connectToWiFi()
 {
@@ -365,12 +371,12 @@ static void getTelemetryPayload(az_span payload, az_span* out_payload)
   int pot1_moisture = get_soli_moisture(POT1_PIN);
 
     // Checking and setting if pump needs to be run
-  if( run_pump1 != true && pot1_moisture < (POT1_MOISTURE_THRESHOLD - 5)){
+  if( run_pump1 != true && pot1_moisture < (setPreferences("pot1") - 5)){
     run_pump1 = true;
     pump1_ran_at = millis();
     Logger.Info("Truning pump on");
   }
-  else if( run_pump1 == true && pot1_moisture >= (POT1_MOISTURE_THRESHOLD + 5) ){
+  else if( run_pump1 == true && pot1_moisture >= (setPreferences("pot1") + 5) ){
     run_pump1 = false;
   }
   // printf ( "Current local time and date: %s", asctime (timeinfo) );
@@ -380,8 +386,8 @@ static void getTelemetryPayload(az_span payload, az_span* out_payload)
   // payload = az_span_copy(payload, AZ_SPAN_FROM_STR(" }"));
   // payload = az_span_copy_u8(payload, '\0');
 
-  char msg[100] = {0};
-  snprintf(msg, sizeof(msg)-1, "{ \"time\": \"%s\", \"temp\": %d, \"humidity\": %d, \"pump\": %d, \"pot1\": %d }", time_str1, temp, humidity, run_pump1, pot1_moisture);
+  char msg[TELEMETRY_PAYLOAD_SIZE] = {0};
+  snprintf(msg, sizeof(msg)-1, "{\"time\": \"%s\", \"temp\": %d, \"humidity\": %d, \"pump\": %d, \"pot1\": { \"moisture\":%d, \"threshold\": %d}}", time_str1, temp, humidity, run_pump1, pot1_moisture, setPreferences("pot1"));
   payload = az_span_copy(payload, az_span_create_from_str(msg) );
   payload = az_span_copy_u8(payload, '\0');
 
@@ -441,7 +447,7 @@ static bool is_pump_on(){
 
 static void plantsWateringHandeler(){
   if(run_pump1 == true){
-    if(millis() > pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS){
+    if(millis() > pump1_ran_at + setPreferences("pump")){
       run_pump1 = false;
       turn_pump_on(false);
       Logger.Info("Pump is OFF.");
@@ -457,6 +463,24 @@ static void plantsWateringHandeler(){
   }
 }
 
+static unsigned int setPreferences(char* key){
+  return preferences.getUInt(key);
+}
+
+static void setPreferences(){
+  preferences.begin("potData",false);
+  unsigned int p1 = preferences.getUInt("pot1");
+  unsigned int pump = preferences.getUInt("pump");
+
+  if(p1 == 0)  preferences.putUInt("pot1",DEFAULT_POT1_MOISTURE_THRESHOLD);
+  if(pump == 0)  preferences.putUInt("pump",DEFAULT_PUMP_RUN_DURATION_IN_MILLISECS);
+
+  // logging
+  char msg[50] = {0};
+  snprintf(msg, sizeof(msg)-1,"preferences.Pot1: %d preferences.pump: %d",p1,pump);
+  Logger.Info(msg);
+}
+
 // Arduino setup and loop main functions.
 
 void setup()
@@ -469,6 +493,7 @@ void setup()
   digitalWrite(PUMP1_pin, HIGH);
 
   establishConnection();
+  setPreferences();
 }
 
 void loop()

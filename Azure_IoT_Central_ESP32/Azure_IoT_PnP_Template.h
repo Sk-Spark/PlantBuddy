@@ -101,4 +101,6 @@ int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t c
  */
 int azure_pnp_handle_properties_update(azure_iot_t* azure_iot, az_span properties, uint32_t request_id);
 
+void water_pump_handler();
+
 #endif // AZURE_IOT_PNP_TEMPLATE_H

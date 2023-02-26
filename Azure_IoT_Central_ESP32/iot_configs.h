@@ -53,10 +53,10 @@
 
 // Azure IoT Central
 #define DPS_ID_SCOPE                      "0ne00764250"
-#define IOT_CONFIG_DEVICE_ID              "Esp8266-test-device"
+#define IOT_CONFIG_DEVICE_ID              "1anjaf4cnea"
 // Use device key if not using certificates
 #ifndef IOT_CONFIG_USE_X509_CERT
-  #define IOT_CONFIG_DEVICE_KEY             "L/rxF75eNGYXfhIJl4GPLFrp2HU/nNm17dKk60eyx5E="
+  #define IOT_CONFIG_DEVICE_KEY             "8TXZvjqB3XSM2gaWHhzRryX5Q3ttAalM7fza40CtOTk="
 #endif // IOT_CONFIG_USE_X509_CERT
 
 
@@ -72,5 +72,3 @@
 // After that, the sample automatically generates a new password and re-connects.
 #define MQTT_PASSWORD_LIFETIME_IN_MINUTES 60
 
-// For watering pump
-#define PUMP_RUN_DURATION_IN_SECONDS 30

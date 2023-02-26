@@ -40,23 +40,12 @@
 #define SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE             8192
 
 //Soli moisture values
-#define MAX_SOIL_MOISTURE                              2835 // 100% soil moisture
+#define MAX_SOIL_MOISTURE                              2400 // 100% soil moisture
 #define MIN_SOIL_MOISTURE                              4095 // 0% soil moisture
 
 #define TELEMETRY_PROP_NAME_TEMPERATURE                "temperature"
 #define TELEMETRY_PROP_NAME_SOIL_MOISTURE_POT1         "pot1"
 #define TELEMETRY_PROP_NAME_HUMIDITY                   "humidity"
-#define TELEMETRY_PROP_NAME_LIGHT                      "light"
-#define TELEMETRY_PROP_NAME_PRESSURE                   "pressure"
-#define TELEMETRY_PROP_NAME_ALTITUDE                   "altitude"
-#define TELEMETRY_PROP_NAME_MAGNETOMETERX              "magnetometerX"
-#define TELEMETRY_PROP_NAME_MAGNETOMETERY              "magnetometerY"
-#define TELEMETRY_PROP_NAME_MAGNETOMETERZ              "magnetometerZ"
-#define TELEMETRY_PROP_NAME_PITCH                      "pitch"
-#define TELEMETRY_PROP_NAME_ROLL                       "roll"
-#define TELEMETRY_PROP_NAME_ACCELEROMETERX             "accelerometerX"
-#define TELEMETRY_PROP_NAME_ACCELEROMETERY             "accelerometerY"
-#define TELEMETRY_PROP_NAME_ACCELEROMETERZ             "accelerometerZ"
 
 static az_span COMMAND_NAME_TOGGLE_LED_1 = AZ_SPAN_FROM_STR("ToggleLed1");
 static az_span COMMAND_NAME_TOGGLE_LED_2 = AZ_SPAN_FROM_STR("ToggleLed2");
@@ -103,8 +92,13 @@ DHT dht(DHTPIN, DHTTYPE);
 
 // For Pot 1
 #define POT1_PIN 34
-#define PUMP1_pin 18
+#define POT1_MOISTURE_THRESHOLD 50 // Pot1 moisture threshold
+
+// --- Pump --- //
+#define PUMP1_PIN 18
+#define PUMP_RUN_DURATION_IN_MILLISECS 1000*5 // 10 seconds
 static bool run_pump1 = false;
+static unsigned long pump1_ran_at = 0;
 
 /* --- Function Prototypes --- */
 /* Please find the function implementations at the bottom of this file */
@@ -121,6 +115,8 @@ static int consume_properties_and_generate_response(
 void azure_pnp_init()
 {
   dht.begin();
+  pinMode(PUMP1_PIN, OUTPUT);
+  pinMode(POT1_PIN, INPUT);
 }
 
 const az_span azure_pnp_get_model_id()
@@ -236,55 +232,58 @@ int azure_pnp_handle_properties_update(azure_iot_t* azure_iot, az_span propertie
   return RESULT_OK;
 }
 
+/* --- Internal Functions --- */
 static int map_soil_moisture_value(int moisture_value){
   return map(moisture_value, MAX_SOIL_MOISTURE , MIN_SOIL_MOISTURE, 100, 1);
 }
 
-/* --- Internal Functions --- */
-static float simulated_get_temperature()
+static float get_temperature()
 {
-  // return 21.0;
   return dht.readTemperature();
 }
 
-static float simulated_get_humidity()
+static float get_humidity()
 {
-  // return 88.0;
   return dht.readHumidity();
 }
 
 static int get_soli_moisture_pot1(){
   int moisture_value = analogRead(POT1_PIN);
   moisture_value = map_soil_moisture_value(moisture_value);
-  LogInfo("pot1: %d%", moisture_value);
+  LogInfo("pot1: %d", moisture_value);
   return moisture_value;
 }
 
-static float simulated_get_ambientLight()
-{
-  return 700.0;
+static void turn_pump_on(bool value){
+  // Pump runs on inverse logic.
+  if(value == true)
+    digitalWrite(PUMP1_PIN, LOW);
+  else{
+    digitalWrite(PUMP1_PIN, HIGH);
+  }
 }
 
-static void simulated_get_pressure_altitude(float* pressure, float* altitude)
-{
-  *pressure = 55.0;
-  *altitude = 700.0;
+static bool is_pump_on(){
+  return !digitalRead(PUMP1_PIN); // Pump runs on inverse logic.
 }
 
-static void simulated_get_magnetometer(int32_t* magneticFieldX, int32_t* magneticFieldY, int32_t* magneticFieldZ)
-{
-  *magneticFieldX = 2000;
-  *magneticFieldY = 3000;
-  *magneticFieldZ = 4000;
-}
-
-static void simulated_get_pitch_roll_accel(int32_t* pitch, int32_t* roll, int32_t* accelerationX, int32_t* accelerationY, int32_t* accelerationZ)
-{
-  *pitch = 30;
-  *roll = 90;
-  *accelerationX = 33;
-  *accelerationY = 44;
-  *accelerationZ = 55;
+// For turning on and off pump
+void water_pump_handler(){
+  if(run_pump1 == true){
+    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)){
+      run_pump1 = false;
+      turn_pump_on(false);
+      LogInfo("Pump turned OFF. [Over run]");
+    }
+    else if(!is_pump_on()){
+      turn_pump_on(true);
+      LogInfo("Pump is ON.");
+    }
+  }
+  else if(run_pump1 == false && is_pump_on()){
+    turn_pump_on(false);
+    LogInfo("Pump turned OFF. [flag OFF]");
+  }
 }
 
 static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_buffer_size, size_t* payload_buffer_length)
@@ -298,14 +297,20 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   int32_t magneticFieldX, magneticFieldY, magneticFieldZ;
   int32_t pitch, roll, accelerationX, accelerationY, accelerationZ;
 
-  // Acquiring the simulated data.
-  temperature = simulated_get_temperature();
-  humidity = simulated_get_humidity();
-  light = simulated_get_ambientLight();
-  simulated_get_pressure_altitude(&pressure, &altitude);
-  simulated_get_magnetometer(&magneticFieldX, &magneticFieldY, &magneticFieldZ);
-  simulated_get_pitch_roll_accel(&pitch, &roll, &accelerationX, &accelerationY, &accelerationZ);
+  humidity = get_humidity();
+  temperature = get_temperature();
   soli_moisture_pot1 = get_soli_moisture_pot1();
+
+  // Checking and setting if pump needs to be run
+  if( run_pump1 != true && soli_moisture_pot1 <= (POT1_MOISTURE_THRESHOLD - 5)){
+    run_pump1 = true;
+    pump1_ran_at = millis();
+    LogInfo("[telemetry fun] Truning pump ON.");
+  }
+  else if( run_pump1 == true && soli_moisture_pot1 >= (POT1_MOISTURE_THRESHOLD + 5) ){
+    run_pump1 = false;
+    LogInfo("[telemetry fun] Truning pump OFF.");
+  }
 
   rc = az_json_writer_init(&jw, payload_buffer_span, NULL);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed initializing json writer for telemetry.");
@@ -323,70 +328,30 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   rc = az_json_writer_append_double(&jw, humidity, DOUBLE_DECIMAL_PLACE_DIGITS);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding humidity property value to telemetry payload. ");
 
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_LIGHT));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding light property name to telemetry payload.");
-  rc = az_json_writer_append_double(&jw, light, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding light property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_PRESSURE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pressure property name to telemetry payload.");
-  rc = az_json_writer_append_double(&jw, pressure, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pressure property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_ALTITUDE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding altitude property name to telemetry payload.");
-  rc = az_json_writer_append_double(&jw, altitude, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding altitude property value to telemetry payload.");
-
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_SOIL_MOISTURE_POT1));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property name to telemetry payload.");
   rc = az_json_writer_append_int32(&jw, soli_moisture_pot1);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property value to telemetry payload. ");
 
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_MAGNETOMETERX));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding magnetometer(X) property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, magneticFieldX);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding magnetometer(X) property value to telemetry payload.");
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("threshold1"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding thrshold for pot1 property name to telemetry payload.");
+  rc = az_json_writer_append_int32(&jw, POT1_MOISTURE_THRESHOLD);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding thrshold for pot1 property value to telemetry payload. ");
 
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_MAGNETOMETERY));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding magnetometer(Y) property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, magneticFieldY);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding magnetometer(Y) property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_MAGNETOMETERZ));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding magnetometer(Z) property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, magneticFieldZ);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding magnetometer(Z) property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_PITCH));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pitch property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, pitch);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pitch property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_ROLL));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding roll property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, roll);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding roll property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_ACCELEROMETERX));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding acceleration(X) property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, accelerationX);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding acceleration(X) property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_ACCELEROMETERY));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding acceleration(Y) property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, accelerationY);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding acceleration(Y) property value to telemetry payload.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_ACCELEROMETERZ));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding acceleration(Z) property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, accelerationZ);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding acceleration(Z) property value to telemetry payload.");
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pump1"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property name to telemetry payload.");
+  rc = az_json_writer_append_int32(&jw, run_pump1);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property value to telemetry payload. ");
 
   rc = az_json_writer_append_end_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing telemetry json payload.");
 
   payload_buffer_span = az_json_writer_get_bytes_used_in_destination(&jw);
+
+  // char msg[200] = {0};
+  // snprintf(msg, sizeof(msg)-1, "{\"temp\": %d, \"humidity\": %d, \"pump\": %d, \"pot1\": { \"moisture\":%d, \"threshold\": %d}}", temperature, humidity, run_pump1, soli_moisture_pot1, POT1_MOISTURE_THRESHOLD);
+  // payload_buffer_span = az_span_copy(payload_buffer_span, az_span_create_from_str(msg) );
+  // payload_buffer_span = az_span_copy_u8(payload_buffer_span, '\0');
 
   if ((payload_buffer_size - az_span_size(payload_buffer_span)) < 1)
   {

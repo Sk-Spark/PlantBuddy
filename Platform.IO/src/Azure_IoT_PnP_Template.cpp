@@ -250,9 +250,7 @@ static float get_humidity()
 
 static int get_soli_moisture_pot1(){
   int moisture_value = analogRead(POT1_PIN);
-  LogInfo("pot1: %d", moisture_value);
-  moisture_value = map_soil_moisture_value(moisture_value);
-  LogInfo("pot1: %d%%", moisture_value);
+  LogInfo("pot1 moisture value: %d", moisture_value);
   return moisture_value;
 }
 
@@ -295,21 +293,23 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   az_span payload_buffer_span = az_span_create(payload_buffer, payload_buffer_size);
   az_span json_span;
   float temperature, humidity, light, pressure, altitude;
-  int soli_moisture_pot1;
+  int soli_moisture_pot1, soli_moisture_pot1_percent;
   int32_t magneticFieldX, magneticFieldY, magneticFieldZ;
   int32_t pitch, roll, accelerationX, accelerationY, accelerationZ;
 
   humidity = get_humidity();
   temperature = get_temperature();
   soli_moisture_pot1 = get_soli_moisture_pot1();
+  soli_moisture_pot1_percent = map_soil_moisture_value(soli_moisture_pot1);
+  LogInfo("pot1: %d%%", soli_moisture_pot1_percent);
 
   // Checking and setting if pump needs to be run
-  if( run_pump1 != true && soli_moisture_pot1 <= (POT1_MOISTURE_THRESHOLD - 5)){
+  if( run_pump1 != true && soli_moisture_pot1_percent <= (POT1_MOISTURE_THRESHOLD - 5)){
     run_pump1 = true;
     pump1_ran_at = millis();
     LogInfo("[telemetry fun] Truning pump ON.");
   }
-  else if( run_pump1 == true && soli_moisture_pot1 >= (POT1_MOISTURE_THRESHOLD + 5) ){
+  else if( run_pump1 == true && soli_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
     run_pump1 = false;
     LogInfo("[telemetry fun] Truning pump OFF.");
   }
@@ -319,27 +319,32 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
 
   rc = az_json_writer_append_begin_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed setting telemetry json root.");
-
+  // Temperature telemetry
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_TEMPERATURE));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding temperature property name to telemetry payload.");
   rc = az_json_writer_append_double(&jw, temperature, DOUBLE_DECIMAL_PLACE_DIGITS);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding temperature property value to telemetry payload. ");
-
+  // Humidity telemetry
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_HUMIDITY));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding humidity property name to telemetry payload.");
   rc = az_json_writer_append_double(&jw, humidity, DOUBLE_DECIMAL_PLACE_DIGITS);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding humidity property value to telemetry payload. ");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_SOIL_MOISTURE_POT1));
+  // Soil moisture telemetry in percent
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pot1_moisture_percent"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property name to telemetry payload.");
+  rc = az_json_writer_append_int32(&jw, soli_moisture_pot1_percent);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property value to telemetry payload. ");
+  // Soil moisture telemetry raw sensor value
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pot1_moisture_sensore_value"));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property name to telemetry payload.");
   rc = az_json_writer_append_int32(&jw, soli_moisture_pot1);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property value to telemetry payload. ");
-
+  // Thresholds telemetry
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("threshold1"));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding thrshold for pot1 property name to telemetry payload.");
   rc = az_json_writer_append_int32(&jw, POT1_MOISTURE_THRESHOLD);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding thrshold for pot1 property value to telemetry payload. ");
-
+  // Pump1 telemetry
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pump1"));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property name to telemetry payload.");
   rc = az_json_writer_append_int32(&jw, run_pump1);

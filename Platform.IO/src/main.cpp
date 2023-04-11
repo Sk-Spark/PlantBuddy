@@ -448,10 +448,16 @@ static void connect_to_wifi()
   while (WiFi.status() != WL_CONNECTED)
   {
     digitalWrite(STATUS_LED, LOW);
-    delay(250);
-    Serial.print(".");
+    delay(100);
     digitalWrite(STATUS_LED, HIGH);
-    delay(250);
+    delay(100);
+    digitalWrite(STATUS_LED, LOW);
+    delay(100);
+    digitalWrite(STATUS_LED, HIGH);
+    delay(100);
+    digitalWrite(STATUS_LED, LOW);
+    delay(100);
+    Serial.print(".");
   }
   digitalWrite(STATUS_LED, LOW);
 

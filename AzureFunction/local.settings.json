@@ -1,8 +1,0 @@
-{
-  "IsEncrypted": false,
-  "Values": {
-    "AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=pociotstorageaccount;AccountKey=O6ZXKRSDg+i6gnlNvnEU8MIeh+d5MxRQw2ZGy8zBJsKeEMFZAi3UFLjBFZU180d/zEWAy+tojxKv+AStJW0B6Q==;EndpointSuffix=core.windows.net",
-    "FUNCTIONS_WORKER_RUNTIME": "node",
-    "plantsbuddy_SERVICEBUS": "Endpoint=sb://plantsbuddy.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=At9+ifrwXvqnCt01F1MILIiu6N79omkOy+ASbPovfOY="
-  }
-}

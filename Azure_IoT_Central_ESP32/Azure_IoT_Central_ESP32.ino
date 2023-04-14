@@ -101,7 +101,7 @@ static uint8_t az_iot_data_buffer[AZ_IOT_DATA_BUFFER_SIZE];
 static uint32_t properties_request_id = 0;
 static bool send_device_info = true;
 
-#define STATUS_LED 2
+#define STATUS_LED 5
 
 /* --- MQTT Interface Functions --- */
 /*
@@ -447,19 +447,9 @@ static void connect_to_wifi()
   WiFi.begin(wifi_ssid, wifi_password);
   while (WiFi.status() != WL_CONNECTED)
   {
-    digitalWrite(STATUS_LED, LOW);
-    delay(100);
-    digitalWrite(STATUS_LED, HIGH);
-    delay(100);
-    digitalWrite(STATUS_LED, LOW);
-    delay(100);
-    digitalWrite(STATUS_LED, HIGH);
-    delay(100);
-    digitalWrite(STATUS_LED, LOW);
-    delay(100);
+    delay(500);
     Serial.print(".");
   }
-  digitalWrite(STATUS_LED, LOW);
 
   Serial.println("");
 

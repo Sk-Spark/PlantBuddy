@@ -1,8 +1,8 @@
-const endpoint = COSMOS_DB_ENDPOINT;
-const key = COSMOS_KEY;
-
-const appinsightConnectionString = APPINSIGHTCONNECTIONSTRING;
 module.exports = async function (context, mySbMsg) {
+  const endpoint = process.env["COSMOS_DB_ENDPOINT"];
+  const key = process.env["COSMOS_KEY"];
+
+  const appinsightConnectionString = process.env["APPINSIGHTCONNECTIONSTRING"];
   const { v4: uuidv4 } = require("uuid");
   const { CosmosClient } = require("@azure/cosmos");
   const client = new CosmosClient({ endpoint, key });
@@ -55,6 +55,7 @@ async function sendDataToCosmos(data, database, id, appInsights) {
     );
 
     await container.items.create(dataToCosmos);
+    console.log("Item created in cosmos");
   } catch (ex) {
     appInsights.trackException({ exception: new Error(ex) });
   }

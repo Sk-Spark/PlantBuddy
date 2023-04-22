@@ -94,6 +94,12 @@ static bool led2_on = false;
 #define DHTPIN 4 
 DHT dht(DHTPIN, DHTTYPE);
 
+// --- Soil Moisture Sensor Read Interval --- //
+static time_t last_soil_moisture_read_time = INDEFINITE_TIME;
+uint soil_moisture_read = 0;
+int soil_moisture_pot1 = 0;
+float soil_moisture_pot1_avg = 0;
+
 // For Pot 1
 #define POT1_PIN 34
 #define POT1_MOISTURE_THRESHOLD 50 // Pot1 moisture threshold in %, 0-100
@@ -139,6 +145,64 @@ void azure_pnp_set_telemetry_frequency(size_t frequency_in_seconds)
   LogInfo("Telemetry frequency set to once every %d seconds.", telemetry_frequency_in_seconds);
 }
 
+/* --- Internal Functions --- */
+static int map_soil_moisture_value(int moisture_value){
+ int percent = map(moisture_value, MAX_SOIL_MOISTURE , MIN_SOIL_MOISTURE, 100, 0);
+  if(percent < 0)
+    percent = 0;
+  else if(percent > 100)
+    percent = 100;
+  // Serial.printf("percent: %d%\n",percent);
+  return percent;
+}
+
+static float get_temperature()
+{
+  return dht.readTemperature();
+}
+
+static float get_humidity()
+{
+  return dht.readHumidity();
+}
+
+static int get_soil_moisture_pot1(){
+  int moisture_value = analogRead(POT1_PIN);
+  LogInfo("pot1 moisture value: %d", moisture_value);
+  return moisture_value;
+}
+
+static void turn_pump_on(bool value){
+  if(value == false)
+    digitalWrite(PUMP1_PIN, LOW);
+  else{
+    digitalWrite(PUMP1_PIN, HIGH);
+  }
+}
+
+static bool is_pump_on(){
+  return digitalRead(PUMP1_PIN); // Pump runs on inverse logic.
+}
+
+// For turning on and off pump
+void water_pump_handler(){
+  if(run_pump1 == true){
+    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)){
+      run_pump1 = false;
+      turn_pump_on(false);
+      LogInfo("Pump turned OFF. [Over run]");
+    }
+    else if(!is_pump_on()){
+      turn_pump_on(true);
+      LogInfo("Pump is ON.");
+    }
+  }
+  else if(run_pump1 == false && is_pump_on()){
+    turn_pump_on(false);
+    LogInfo("Pump turned OFF. [flag OFF]");
+  }
+}
+
 /* Application-specific data section */
 
 int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
@@ -147,12 +211,24 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
 
   time_t now = time(NULL);
 
+
   if (now == INDEFINITE_TIME)
   {
     LogError("Failed getting current time for controlling telemetry.");
     return RESULT_ERROR;
   }
-  else if (last_telemetry_send_time == INDEFINITE_TIME ||
+  
+  if(last_soil_moisture_read_time == INDEFINITE_TIME || difftime(now, last_soil_moisture_read_time) >= SOIL_MOISTURE_READ_FREQUENCY_IN_SECONDS)
+  {
+    last_soil_moisture_read_time = now;
+    // Read soil moisture here.
+    soil_moisture_pot1 = get_soil_moisture_pot1();
+    ++soil_moisture_read;
+    soil_moisture_pot1_avg += (soil_moisture_pot1 - soil_moisture_pot1_avg ) / soil_moisture_read;
+    LogInfo("Soil Moisture read: %d / %d -> avg: %f",soil_moisture_pot1, soil_moisture_read, soil_moisture_pot1_avg);    
+  }
+
+  if (last_telemetry_send_time == INDEFINITE_TIME ||
            difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds)
   {
     size_t payload_size;
@@ -171,6 +247,7 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
       return RESULT_ERROR;
     }
   }
+
 
   return RESULT_OK;
 }
@@ -241,64 +318,6 @@ int azure_pnp_handle_properties_update(azure_iot_t* azure_iot, az_span propertie
   return RESULT_OK;
 }
 
-/* --- Internal Functions --- */
-static int map_soil_moisture_value(int moisture_value){
- int percent = map(moisture_value, MAX_SOIL_MOISTURE , MIN_SOIL_MOISTURE, 100, 0);
-  if(percent < 0)
-    percent = 0;
-  else if(percent > 100)
-    percent = 100;
-  // Serial.printf("percent: %d%\n",percent);
-  return percent;
-}
-
-static float get_temperature()
-{
-  return dht.readTemperature();
-}
-
-static float get_humidity()
-{
-  return dht.readHumidity();
-}
-
-static int get_soil_moisture_pot1(){
-  int moisture_value = analogRead(POT1_PIN);
-  LogInfo("pot1 moisture value: %d", moisture_value);
-  return moisture_value;
-}
-
-static void turn_pump_on(bool value){
-  if(value == false)
-    digitalWrite(PUMP1_PIN, LOW);
-  else{
-    digitalWrite(PUMP1_PIN, HIGH);
-  }
-}
-
-static bool is_pump_on(){
-  return digitalRead(PUMP1_PIN); // Pump runs on inverse logic.
-}
-
-// For turning on and off pump
-void water_pump_handler(){
-  if(run_pump1 == true){
-    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)){
-      run_pump1 = false;
-      turn_pump_on(false);
-      LogInfo("Pump turned OFF. [Over run]");
-    }
-    else if(!is_pump_on()){
-      turn_pump_on(true);
-      LogInfo("Pump is ON.");
-    }
-  }
-  else if(run_pump1 == false && is_pump_on()){
-    turn_pump_on(false);
-    LogInfo("Pump turned OFF. [flag OFF]");
-  }
-}
-
 static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_buffer_size, size_t* payload_buffer_length)
 {
   az_json_writer jw;
@@ -306,18 +325,19 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   az_span payload_buffer_span = az_span_create(payload_buffer, payload_buffer_size);
   az_span json_span;
   float temperature, humidity, light, pressure, altitude;
-  int soil_moisture_pot1, soil_moisture_pot1_percent;
+  int soil_moisture_pot1_percent;
   int32_t magneticFieldX, magneticFieldY, magneticFieldZ;
   int32_t pitch, roll, accelerationX, accelerationY, accelerationZ;
 
   humidity = get_humidity();
   temperature = get_temperature();
-  soil_moisture_pot1 = get_soil_moisture_pot1();
-  soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1);
+  soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1_avg);
+
+  // Logging the values
   LogInfo("Temp: %f °C", temperature);
   LogInfo("Humidity: %f", humidity);
-  LogInfo("pot1 sensor value: %d", soil_moisture_pot1);
-  LogInfo("pot1: %d%%", soil_moisture_pot1_percent);
+  LogInfo("pot1 sensor avg value: %.0f", soil_moisture_pot1_avg);
+  LogInfo("pot1 moiture: %d%%", soil_moisture_pot1_percent);
 
   displayToLed(temperature, soil_moisture_pot1_percent);
 
@@ -355,7 +375,7 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   // Soil moisture telemetry raw sensor value
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pot1_moisture_sensore_value"));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, soil_moisture_pot1);
+  rc = az_json_writer_append_int32(&jw, soil_moisture_pot1_avg);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property value to telemetry payload. ");
   // Thresholds telemetry
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("threshold1"));
@@ -386,6 +406,10 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
 
   payload_buffer[az_span_size(payload_buffer_span)] = null_terminator;
   *payload_buffer_length = az_span_size(payload_buffer_span);
+
+  // Resetting the soil moisture read count and average
+  soil_moisture_pot1_avg = 0;
+  soil_moisture_read = 0;
  
   return RESULT_OK;
 }

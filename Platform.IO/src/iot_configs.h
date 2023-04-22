@@ -55,13 +55,13 @@
 #define DPS_ID_SCOPE                      "0ne00764250"
 
 
-#define IOT_CONFIG_DEVICE_ID              "2ls44wxpgsa" // Device ID for V01
-// #define IOT_CONFIG_DEVICE_ID              "1anjaf4cnea" // Device ID for POC
+// #define IOT_CONFIG_DEVICE_ID              "2ls44wxpgsa" // Device ID for V01
+#define IOT_CONFIG_DEVICE_ID              "1anjaf4cnea" // Device ID for POC
 
 // Use device key if not using certificates
 #ifndef IOT_CONFIG_USE_X509_CERT
-  #define IOT_CONFIG_DEVICE_KEY             "s7leekFT5EoK+BygvJHhu9G3kgYu7bxnFsuQXsLCPGI=" // Device Key for V01
-  // #define IOT_CONFIG_DEVICE_KEY             "8TXZvjqB3XSM2gaWHhzRryX5Q3ttAalM7fza40CtOTk=" // Device Key for POC
+  // #define IOT_CONFIG_DEVICE_KEY             "s7leekFT5EoK+BygvJHhu9G3kgYu7bxnFsuQXsLCPGI=" // Device Key for V01
+  #define IOT_CONFIG_DEVICE_KEY             "8TXZvjqB3XSM2gaWHhzRryX5Q3ttAalM7fza40CtOTk=" // Device Key for POC
 #endif // IOT_CONFIG_USE_X509_CERT
 
 
@@ -71,7 +71,7 @@
 #define AZURE_SDK_CLIENT_USER_AGENT       "c%2F" AZ_SDK_VERSION_STRING "(ard%3Besp32)"
 
 // Publish 1 message in time interval of TELEMETRY_FREQUENCY_IN_SECONDS seconds
-#define TELEMETRY_FREQUENCY_IN_SECONDS    300 // 5 minutes
+#define TELEMETRY_FREQUENCY_IN_SECONDS    10 // 10 seconds
 
 // For how long the MQTT password (SAS token) is valid, in minutes.
 // After that, the sample automatically generates a new password and re-connects.

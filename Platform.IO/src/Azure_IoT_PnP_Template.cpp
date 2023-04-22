@@ -12,8 +12,11 @@
 
 #include <az_precondition_internal.h>
 
-#include <DHT.h>
+// OLed Display
+#include "oled_display.h"
 
+// DTH 11 sensore
+#include <DHT.h>
 #define DHTTYPE DHT11   // DHT 11
 
 /* --- Defines --- */
@@ -40,9 +43,9 @@
 #define SAMPLE_TOTAL_STORAGE_PROPERTY_VALUE            4096
 #define SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE             8192
 
-//Soli moisture values
-#define MAX_SOIL_MOISTURE                              2400 // 100% soil moisture
-#define MIN_SOIL_MOISTURE                              4095 // 0% soil moisture
+//soil moisture values
+#define MAX_SOIL_MOISTURE                              1900 // 100% soil moisture
+#define MIN_SOIL_MOISTURE                              3440 // 0% soil moisture
 
 #define TELEMETRY_PROP_NAME_TEMPERATURE                "temperature"
 #define TELEMETRY_PROP_NAME_SOIL_MOISTURE_POT1         "pot1"
@@ -101,6 +104,7 @@ DHT dht(DHTPIN, DHTTYPE);
 static bool run_pump1 = false;
 static unsigned long pump1_ran_at = 0;
 
+
 /* --- Function Prototypes --- */
 /* Please find the function implementations at the bottom of this file */
 static int generate_telemetry_payload(
@@ -118,6 +122,9 @@ void azure_pnp_init()
   dht.begin();
   pinMode(PUMP1_PIN, OUTPUT);
   pinMode(POT1_PIN, INPUT);
+  
+  // --- OLED Display ----
+  setupDisplay();
 }
 
 const az_span azure_pnp_get_model_id()
@@ -235,7 +242,13 @@ int azure_pnp_handle_properties_update(azure_iot_t* azure_iot, az_span propertie
 
 /* --- Internal Functions --- */
 static int map_soil_moisture_value(int moisture_value){
-  return map(moisture_value, MAX_SOIL_MOISTURE , MIN_SOIL_MOISTURE, 100, 0);
+ int percent = map(moisture_value, MAX_SOIL_MOISTURE , MIN_SOIL_MOISTURE, 100, 0);
+  if(percent < 0)
+    percent = 0;
+  else if(percent > 100)
+    percent = 100;
+  // Serial.printf("percent: %d%\n",percent);
+  return percent;
 }
 
 static float get_temperature()
@@ -248,7 +261,7 @@ static float get_humidity()
   return dht.readHumidity();
 }
 
-static int get_soli_moisture_pot1(){
+static int get_soil_moisture_pot1(){
   int moisture_value = analogRead(POT1_PIN);
   LogInfo("pot1 moisture value: %d", moisture_value);
   return moisture_value;
@@ -293,23 +306,28 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   az_span payload_buffer_span = az_span_create(payload_buffer, payload_buffer_size);
   az_span json_span;
   float temperature, humidity, light, pressure, altitude;
-  int soli_moisture_pot1, soli_moisture_pot1_percent;
+  int soil_moisture_pot1, soil_moisture_pot1_percent;
   int32_t magneticFieldX, magneticFieldY, magneticFieldZ;
   int32_t pitch, roll, accelerationX, accelerationY, accelerationZ;
 
   humidity = get_humidity();
   temperature = get_temperature();
-  soli_moisture_pot1 = get_soli_moisture_pot1();
-  soli_moisture_pot1_percent = map_soil_moisture_value(soli_moisture_pot1);
-  LogInfo("pot1: %d%%", soli_moisture_pot1_percent);
+  soil_moisture_pot1 = get_soil_moisture_pot1();
+  soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1);
+  LogInfo("Temp: %f °C", temperature);
+  LogInfo("Humidity: %f", humidity);
+  LogInfo("pot1 sensor value: %d", soil_moisture_pot1);
+  LogInfo("pot1: %d%%", soil_moisture_pot1_percent);
+
+  displayToLed(temperature, soil_moisture_pot1_percent);
 
   // Checking and setting if pump needs to be run
-  if( run_pump1 != true && soli_moisture_pot1_percent <= (POT1_MOISTURE_THRESHOLD - 5)){
+  if( run_pump1 != true && soil_moisture_pot1_percent <= (POT1_MOISTURE_THRESHOLD - 5)){
     run_pump1 = true;
     pump1_ran_at = millis();
     LogInfo("[telemetry fun] Truning pump ON.");
   }
-  else if( run_pump1 == true && soli_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
+  else if( run_pump1 == true && soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
     run_pump1 = false;
     LogInfo("[telemetry fun] Truning pump OFF.");
   }
@@ -331,14 +349,14 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding humidity property value to telemetry payload. ");
   // Soil moisture telemetry in percent
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pot1_moisture_percent"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, soli_moisture_pot1_percent);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property value to telemetry payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property name to telemetry payload.");
+  rc = az_json_writer_append_int32(&jw, soil_moisture_pot1_percent);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property value to telemetry payload. ");
   // Soil moisture telemetry raw sensor value
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pot1_moisture_sensore_value"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, soli_moisture_pot1);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soli_moisture_pot1 property value to telemetry payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property name to telemetry payload.");
+  rc = az_json_writer_append_int32(&jw, soil_moisture_pot1);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property value to telemetry payload. ");
   // Thresholds telemetry
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("threshold1"));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding thrshold for pot1 property name to telemetry payload.");
@@ -356,7 +374,7 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   payload_buffer_span = az_json_writer_get_bytes_used_in_destination(&jw);
 
   // char msg[200] = {0};
-  // snprintf(msg, sizeof(msg)-1, "{\"temp\": %d, \"humidity\": %d, \"pump\": %d, \"pot1\": { \"moisture\":%d, \"threshold\": %d}}", temperature, humidity, run_pump1, soli_moisture_pot1, POT1_MOISTURE_THRESHOLD);
+  // snprintf(msg, sizeof(msg)-1, "{\"temp\": %d, \"humidity\": %d, \"pump\": %d, \"pot1\": { \"moisture\":%d, \"threshold\": %d}}", temperature, humidity, run_pump1, soil_moisture_pot1, POT1_MOISTURE_THRESHOLD);
   // payload_buffer_span = az_span_copy(payload_buffer_span, az_span_create_from_str(msg) );
   // payload_buffer_span = az_span_copy_u8(payload_buffer_span, '\0');
 

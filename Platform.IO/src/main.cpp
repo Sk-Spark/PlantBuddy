@@ -54,6 +54,9 @@
 #include "Azure_IoT_PnP_Template.h"
 #include "iot_configs.h"
 
+// OLed Display
+#include "oled_display.h"
+
 /* --- Sample-specific Settings --- */
 #define SERIAL_LOGGER_BAUD_RATE 115200
 #define MQTT_DO_NOT_RETAIN_MSG  0
@@ -301,8 +304,7 @@ void on_properties_received(az_span properties)
 /*
  * See the documentation of `command_request_received_t` in AzureIoT.h for details.
  */
-static void on_command_request_received(command_request_t command)
-{  
+static void on_command_request_received(command_request_t command){  
   az_span component_name = az_span_size(command.component_name) == 0 ? AZ_SPAN_FROM_STR("") : command.component_name;
   
   LogInfo("Command request received (id=%.*s, component=%.*s, name=%.*s)", 
@@ -323,10 +325,9 @@ void setup()
   Serial.begin(SERIAL_LOGGER_BAUD_RATE);
   set_logging_function(logging_function);
 
+  azure_pnp_init();  
   connect_to_wifi();
   sync_device_clock_with_ntp_server();
-
-  azure_pnp_init();
 
   /* 
    * The configuration structure used by Azure IoT must remain unchanged (including data buffer) 
@@ -458,10 +459,12 @@ static void connect_to_wifi()
     digitalWrite(STATUS_LED, LOW);
     delay(100);
     Serial.print(".");
+    displayMsg("Connecting to WIFI...");
   }
   digitalWrite(STATUS_LED, LOW);
-
-  Serial.println("");
+  displayMsg("WIFI Connected!");
+  delay(1000);
+  displayMsg("IP:\n"+WiFi.localIP().toString());
 
   LogInfo("WiFi connected, IP address: %s", WiFi.localIP().toString().c_str());
 }

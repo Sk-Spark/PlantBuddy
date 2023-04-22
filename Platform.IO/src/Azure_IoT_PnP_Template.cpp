@@ -96,11 +96,11 @@ DHT dht(DHTPIN, DHTTYPE);
 
 // For Pot 1
 #define POT1_PIN 34
-#define POT1_MOISTURE_THRESHOLD 50 // Pot1 moisture threshold
+#define POT1_MOISTURE_THRESHOLD 50 // Pot1 moisture threshold in %, 0-100
 
 // --- Pump --- //
 #define PUMP1_PIN 18
-#define PUMP_RUN_DURATION_IN_MILLISECS 1000*5 // 10 seconds
+#define PUMP_RUN_DURATION_IN_MILLISECS 1000*10 // 10 seconds
 static bool run_pump1 = false;
 static unsigned long pump1_ran_at = 0;
 
@@ -122,6 +122,7 @@ void azure_pnp_init()
   dht.begin();
   pinMode(PUMP1_PIN, OUTPUT);
   pinMode(POT1_PIN, INPUT);
+  digitalWrite(PUMP1_PIN, LOW);
   
   // --- OLED Display ----
   setupDisplay();
@@ -268,8 +269,7 @@ static int get_soil_moisture_pot1(){
 }
 
 static void turn_pump_on(bool value){
-  // Pump runs on inverse logic.
-  if(value == true)
+  if(value == false)
     digitalWrite(PUMP1_PIN, LOW);
   else{
     digitalWrite(PUMP1_PIN, HIGH);
@@ -277,7 +277,7 @@ static void turn_pump_on(bool value){
 }
 
 static bool is_pump_on(){
-  return !digitalRead(PUMP1_PIN); // Pump runs on inverse logic.
+  return digitalRead(PUMP1_PIN); // Pump runs on inverse logic.
 }
 
 // For turning on and off pump
@@ -446,6 +446,11 @@ static int generate_device_info_payload(az_iot_hub_client const* hub_client, uin
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_TOTAL_MEMORY_PROPERTY_NAME to payload.");
   rc = az_json_writer_append_double(&jw, SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE, DOUBLE_DECIMAL_PLACE_DIGITS);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE to payload. ");
+
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("telemeteryFrequency"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding Telemetery Frequency to payload.");
+  rc = az_json_writer_append_double(&jw, TELEMETRY_FREQUENCY_IN_SECONDS, DOUBLE_DECIMAL_PLACE_DIGITS);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding TELEMETRY_FREQUENCY_IN_SECONDS to payload. ");
 
   rc = az_iot_hub_client_properties_writer_end_component(hub_client, &jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing component object.");

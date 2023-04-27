@@ -411,7 +411,7 @@ void loop()
 
     azure_iot_do_work(&azure_iot);
   }
-  water_pump_handler();
+  // water_pump_handler();
 }
 
 

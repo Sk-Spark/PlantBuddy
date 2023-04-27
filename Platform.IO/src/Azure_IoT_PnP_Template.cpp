@@ -102,7 +102,7 @@ float soil_moisture_pot1_avg = 0;
 
 // For Pot 1
 #define POT1_PIN 34
-#define POT1_MOISTURE_THRESHOLD 50 // Pot1 moisture threshold in %, 0-100
+#define POT1_MOISTURE_THRESHOLD 65 // Pot1 moisture threshold in %, 0-100
 
 // --- Pump --- //
 #define PUMP1_PIN 18
@@ -173,15 +173,19 @@ static int get_soil_moisture_pot1(){
 }
 
 static void turn_pump_on(bool value){
-  if(value == false)
-    digitalWrite(PUMP1_PIN, LOW);
-  else{
+  if(value == true){
     digitalWrite(PUMP1_PIN, HIGH);
+    LogInfo("Turning Pump is ON.");
+  }
+  else{
+    digitalWrite(PUMP1_PIN, LOW);
+    LogInfo("Turning Pump is OFF.");
   }
 }
 
 static bool is_pump_on(){
-  return digitalRead(PUMP1_PIN); // Pump runs on inverse logic.
+  bool pin_state = digitalRead(PUMP1_PIN);
+  return pin_state;
 }
 
 // For turning on and off pump
@@ -211,7 +215,6 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
 
   time_t now = time(NULL);
 
-
   if (now == INDEFINITE_TIME)
   {
     LogError("Failed getting current time for controlling telemetry.");
@@ -224,12 +227,26 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
     // Read soil moisture here.
     soil_moisture_pot1 = get_soil_moisture_pot1();
     ++soil_moisture_read;
+    // Calculate average soil moisture
     soil_moisture_pot1_avg += (soil_moisture_pot1 - soil_moisture_pot1_avg ) / soil_moisture_read;
-    LogInfo("Soil Moisture read: %d / %d -> avg: %f",soil_moisture_pot1, soil_moisture_read, soil_moisture_pot1_avg);    
+    LogInfo("Soil Moisture read: %d / %d -> avg: %f",soil_moisture_pot1, soil_moisture_read, soil_moisture_pot1_avg); 
+       
+    // Checking and setting if pump needs to be run
+    int soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1_avg); 
+    if( run_pump1 != true && soil_moisture_pot1_percent < (POT1_MOISTURE_THRESHOLD)){
+      run_pump1 = true;
+      pump1_ran_at = millis();
+      LogInfo("[telemetry fun] Truning pump ON.");
+    }
+    else if( run_pump1 == true && soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
+      run_pump1 = false;
+      LogInfo("[telemetry fun] Truning pump OFF.");
+    }
   }
+  // Turn pump on and off
+  water_pump_handler();
 
-  if (last_telemetry_send_time == INDEFINITE_TIME ||
-           difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds)
+  if (last_telemetry_send_time == INDEFINITE_TIME || difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds)
   {
     size_t payload_size;
 
@@ -340,17 +357,6 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   LogInfo("pot1 moiture: %d%%", soil_moisture_pot1_percent);
 
   displayToLed(temperature, soil_moisture_pot1_percent);
-
-  // Checking and setting if pump needs to be run
-  if( run_pump1 != true && soil_moisture_pot1_percent <= (POT1_MOISTURE_THRESHOLD - 5)){
-    run_pump1 = true;
-    pump1_ran_at = millis();
-    LogInfo("[telemetry fun] Truning pump ON.");
-  }
-  else if( run_pump1 == true && soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
-    run_pump1 = false;
-    LogInfo("[telemetry fun] Truning pump OFF.");
-  }
 
   rc = az_json_writer_init(&jw, payload_buffer_span, NULL);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed initializing json writer for telemetry.");

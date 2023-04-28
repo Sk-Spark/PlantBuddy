@@ -175,11 +175,11 @@ static int get_soil_moisture_pot1(){
 static void turn_pump_on(bool value){
   if(value == true){
     digitalWrite(PUMP1_PIN, HIGH);
-    LogInfo("Turning Pump is ON.");
+    LogInfo("Turning Pump ON.");
   }
   else{
     digitalWrite(PUMP1_PIN, LOW);
-    LogInfo("Turning Pump is OFF.");
+    LogInfo("Turning Pump OFF.");
   }
 }
 
@@ -229,10 +229,10 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
     ++soil_moisture_read;
     // Calculate average soil moisture
     soil_moisture_pot1_avg += (soil_moisture_pot1 - soil_moisture_pot1_avg ) / soil_moisture_read;
-    LogInfo("Soil Moisture read: %d / %d -> avg: %f",soil_moisture_pot1, soil_moisture_read, soil_moisture_pot1_avg); 
+    int soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1_avg); 
+    LogInfo("Soil Moisture read: %d / %d -> avg: %f -> percent: %d%%",soil_moisture_pot1, soil_moisture_read, soil_moisture_pot1_avg, soil_moisture_pot1_percent); 
        
     // Checking and setting if pump needs to be run
-    int soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1_avg); 
     if( run_pump1 != true && soil_moisture_pot1_percent < (POT1_MOISTURE_THRESHOLD)){
       run_pump1 = true;
       pump1_ran_at = millis();
@@ -246,7 +246,7 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
   // Turn pump on and off
   water_pump_handler();
 
-  if (last_telemetry_send_time == INDEFINITE_TIME || difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds)
+  if (last_telemetry_send_time != INDEFINITE_TIME && difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds)
   {
     size_t payload_size;
 
@@ -263,6 +263,9 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
       LogError("Failed sending telemetry.");
       return RESULT_ERROR;
     }
+  }
+  else if(last_telemetry_send_time == INDEFINITE_TIME){
+    last_telemetry_send_time = now;
   }
 
 

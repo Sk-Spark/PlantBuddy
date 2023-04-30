@@ -116,7 +116,8 @@ int POT1_MOISTURE_THRESHOLD = 0;
 // --- Pump --- //
 #define PUMP1_PIN 18
 #define PUMP_RUN_DURATION_IN_MILLISECS 1000*10 // 10 seconds
-static bool run_pump1 = false;
+// static bool run_pump1 = false;
+static bool water_pot1 = false;
 static unsigned long pump1_ran_at = 0;
 
 
@@ -218,9 +219,8 @@ static bool is_pump_on(){
 
 // For turning on and off pump
 void water_pump_handler(){
-  if(run_pump1 == true){
+  if(water_pot1 == true){
     if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)){
-      run_pump1 = false;
       turn_pump_on(false);
       LogInfo("Pump turned OFF. [Over run]");
     }
@@ -229,7 +229,7 @@ void water_pump_handler(){
       LogInfo("Pump is ON.");
     }
   }
-  else if(run_pump1 == false && is_pump_on()){
+  else if(water_pot1 == false && is_pump_on()){
     turn_pump_on(false);
     LogInfo("Pump turned OFF. [flag OFF]");
   }
@@ -266,14 +266,14 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
     LogInfo("Soil Moisture read: %d / %d -> avg: %f -> percent: %d%%",soil_moisture_pot1, soil_moisture_read, soil_moisture_pot1_avg, soil_moisture_pot1_percent); 
        
     // Checking and setting if pump needs to be run
-    if( run_pump1 != true && soil_moisture_pot1_percent < (POT1_MOISTURE_THRESHOLD)){
-      run_pump1 = true;
+    if( water_pot1 != true && soil_moisture_pot1_percent < (POT1_MOISTURE_THRESHOLD)){
+      water_pot1 = true;
       pump1_ran_at = millis();
-      LogInfo("[telemetry fun] Truning pump ON.");
+      LogInfo("Start watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
     }
-    else if( run_pump1 == true && soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
-      run_pump1 = false;
-      LogInfo("[telemetry fun] Truning pump OFF.");
+    else if( water_pot1 == true && soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
+      water_pot1 = false;
+      LogInfo("Stop watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
     }
   }
   // Turn pump on and off
@@ -454,18 +454,13 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   // Pump1 telemetry
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pump1"));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, run_pump1);
+  rc = az_json_writer_append_int32(&jw, water_pot1);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property value to telemetry payload. ");
 
   rc = az_json_writer_append_end_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing telemetry json payload.");
 
   payload_buffer_span = az_json_writer_get_bytes_used_in_destination(&jw);
-
-  // char msg[200] = {0};
-  // snprintf(msg, sizeof(msg)-1, "{\"temp\": %d, \"humidity\": %d, \"pump\": %d, \"pot1\": { \"moisture\":%d, \"threshold\": %d}}", temperature, humidity, run_pump1, soil_moisture_pot1, POT1_MOISTURE_THRESHOLD);
-  // payload_buffer_span = az_span_copy(payload_buffer_span, az_span_create_from_str(msg) );
-  // payload_buffer_span = az_span_copy_u8(payload_buffer_span, '\0');
 
   if ((payload_buffer_size - az_span_size(payload_buffer_span)) < 1)
   {

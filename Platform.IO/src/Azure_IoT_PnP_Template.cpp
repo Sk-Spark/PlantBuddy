@@ -19,6 +19,12 @@
 #include <DHT.h>
 #define DHTTYPE DHT11   // DHT 11
 
+// EEPROM for storing pot moisture threshold
+#include <EEPROM.h>
+#define EEPROM_SIZE 5 // 5 bytes for storing pot moisture threshold
+#define EEPROM_ADDR_POT1_MOISTURE_THRESHOLD 0 // 1st byte for storing pot moisture threshold
+
+
 /* --- Defines --- */
 // #define AZURE_PNP_MODEL_ID "dtmi:azureiot:devkit:freertos:Esp32AzureIotKit;1"
 #define AZURE_PNP_MODEL_ID "dtmi:azureiot:devkit:freertos:PlantsBuddy;1"
@@ -54,6 +60,7 @@
 static az_span COMMAND_NAME_TOGGLE_LED_1 = AZ_SPAN_FROM_STR("ToggleLed1");
 static az_span COMMAND_NAME_TOGGLE_LED_2 = AZ_SPAN_FROM_STR("ToggleLed2");
 static az_span COMMAND_NAME_DISPLAY_TEXT = AZ_SPAN_FROM_STR("DisplayText");
+static az_span COMMAND_NAME_THRESHOLD_UPDATE_POT1 = AZ_SPAN_FROM_STR("ThresholdUpdate_Pot1");
 #define COMMAND_RESPONSE_CODE_ACCEPTED                 202
 #define COMMAND_RESPONSE_CODE_REJECTED                 404
 
@@ -99,10 +106,12 @@ static time_t last_soil_moisture_read_time = INDEFINITE_TIME;
 uint soil_moisture_read = 0;
 int soil_moisture_pot1 = 0;
 float soil_moisture_pot1_avg = 0;
+bool sendTelemeteryNow = false;
 
 // For Pot 1
 #define POT1_PIN 34
-#define POT1_MOISTURE_THRESHOLD 65 // Pot1 moisture threshold in %, 0-100
+#define DEFAULT_POT1_MOISTURE_THRESHOLD 65 // Default Pot1 moisture threshold in %, 0-100
+int POT1_MOISTURE_THRESHOLD = 0; 
 
 // --- Pump --- //
 #define PUMP1_PIN 18
@@ -122,9 +131,13 @@ static int consume_properties_and_generate_response(
   azure_iot_t* azure_iot, az_span properties,
   uint8_t* buffer, size_t buffer_size, size_t* response_length);
 
+static void readSoilMoistureThresholdFromEEPROM();
+
 /* --- Public Functions --- */
 void azure_pnp_init()
 {
+  LogInfo("Initializing Azure IoT PnP Client");
+  // --- DHT Sensor ---
   dht.begin();
   pinMode(PUMP1_PIN, OUTPUT);
   pinMode(POT1_PIN, INPUT);
@@ -132,7 +145,22 @@ void azure_pnp_init()
   
   // --- OLED Display ----
   setupDisplay();
+
+  // initialize EEPROM with predefined size
+  EEPROM.begin(EEPROM_SIZE);
+  readSoilMoistureThresholdFromEEPROM();
 }
+
+void readSoilMoistureThresholdFromEEPROM(){
+  // read the soil moisture threshold from EEPROM
+  POT1_MOISTURE_THRESHOLD = EEPROM.read(EEPROM_ADDR_POT1_MOISTURE_THRESHOLD);
+  if(POT1_MOISTURE_THRESHOLD<0 || POT1_MOISTURE_THRESHOLD>100){
+    POT1_MOISTURE_THRESHOLD = DEFAULT_POT1_MOISTURE_THRESHOLD;
+    EEPROM.write(EEPROM_ADDR_POT1_MOISTURE_THRESHOLD, POT1_MOISTURE_THRESHOLD);
+    EEPROM.commit();
+  }
+  LogInfo("Pot1 moisture threshold [From EEPROM]: %d %%", POT1_MOISTURE_THRESHOLD);
+} 
 
 const az_span azure_pnp_get_model_id()
 {
@@ -207,6 +235,11 @@ void water_pump_handler(){
   }
 }
 
+// For sending telemetry now
+void setSendTelemetryNow(){
+  sendTelemeteryNow = true;
+}
+
 /* Application-specific data section */
 
 int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
@@ -246,11 +279,12 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
   // Turn pump on and off
   water_pump_handler();
 
-  if (last_telemetry_send_time != INDEFINITE_TIME && difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds)
+  if ( sendTelemeteryNow || (last_telemetry_send_time != INDEFINITE_TIME && difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds))
   {
     size_t payload_size;
 
     last_telemetry_send_time = now;
+    sendTelemeteryNow = false;
 
     if (generate_telemetry_payload(data_buffer, DATA_BUFFER_SIZE, &payload_size) != RESULT_OK)
     {
@@ -267,7 +301,6 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
   else if(last_telemetry_send_time == INDEFINITE_TIME){
     last_telemetry_send_time = now;
   }
-
 
   return RESULT_OK;
 }
@@ -298,6 +331,7 @@ int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t c
   {
     led1_on = !led1_on;
     LogInfo("LED 1 state: %s", (led1_on ? "ON" : "OFF"));
+    LogInfo("Command not recognized (%.*s).", az_span_size(command.command_name), az_span_ptr(command.command_name));
     response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
   }
   else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_TOGGLE_LED_2))
@@ -311,6 +345,32 @@ int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t c
     // The payload comes surrounded by quotes, so to remove them we offset the payload by 1 and its size by 2.
     LogInfo("OLED display: %.*s", az_span_size(command.payload) - 2, az_span_ptr(command.payload) + 1);
     response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+  }
+  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_THRESHOLD_UPDATE_POT1))
+  {
+    char* parse_string = (char*)az_span_ptr(command.payload);
+    parse_string[az_span_size(command.payload)] = '\0';
+    // String parse_string = String(parse_string);
+    int new_threshold = atoi(parse_string);
+    LogInfo("Threshold Update Pot_1: %d, Size:%d", new_threshold, az_span_size(command.payload) );
+    //Check for valid threshold value
+    if(new_threshold < 0 || new_threshold > 100){
+      LogError("Invalid threshold value: %d", new_threshold);
+      response_code = COMMAND_RESPONSE_CODE_REJECTED;
+      return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid threshold value") );
+    }
+    else{
+      // POT1_MOISTURE_THRESHOLD = new_threshold;
+      LogInfo("New threshold value: %d", new_threshold);
+      POT1_MOISTURE_THRESHOLD = new_threshold;
+      response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    }
+
+    // Update threshold value to EEPROM
+    EEPROM.put(EEPROM_ADDR_POT1_MOISTURE_THRESHOLD, new_threshold);
+    EEPROM.commit();
+    response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    setSendTelemetryNow(); // To send telemetry with new threshold value
   }
   else
   {

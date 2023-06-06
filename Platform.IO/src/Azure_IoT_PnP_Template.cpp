@@ -220,11 +220,11 @@ static bool is_pump_on(){
 // For turning on and off pump
 void water_pump_handler(){
   if(water_pot1 == true){
-    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)){
+    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS) && is_pump_on()){
       turn_pump_on(false);
       LogInfo("Pump turned OFF. [Over run]");
     }
-    else if(!is_pump_on()){
+    else if((millis() < (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)) && !is_pump_on()){
       turn_pump_on(true);
       LogInfo("Pump is ON.");
     }
@@ -270,10 +270,18 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
       water_pot1 = true;
       pump1_ran_at = millis();
       LogInfo("Start watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
+      // setSendTelemetryNow();
     }
-    else if( water_pot1 == true && soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5) ){
-      water_pot1 = false;
-      LogInfo("Stop watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
+    else if( water_pot1 == true){
+      if(soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5)){
+        water_pot1 = false;
+        LogInfo("Stop watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
+        // setSendTelemetryNow();
+      }
+      else{
+        pump1_ran_at = millis();
+        LogInfo("Continue watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
+      }
     }
   }
   // Turn pump on and off

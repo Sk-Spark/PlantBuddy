@@ -50,8 +50,8 @@
 #define SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE             8192
 
 //soil moisture values
-#define MAX_SOIL_MOISTURE                              1900 // 100% soil moisture
-#define MIN_SOIL_MOISTURE                              3440 // 0% soil moisture
+#define MAX_SOIL_MOISTURE                              900 // 100% soil moisture
+#define MIN_SOIL_MOISTURE                              2500 // 0% soil moisture
 
 #define TELEMETRY_PROP_NAME_TEMPERATURE                "temperature"
 #define TELEMETRY_PROP_NAME_SOIL_MOISTURE_POT1         "pot1"
@@ -299,11 +299,18 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
       LogError("Failed generating telemetry payload.");
       return RESULT_ERROR;
     }
+    else{
+      LogInfo("Telemetry payload generated.");
+    }
 
     if (azure_iot_send_telemetry(azure_iot, az_span_create(data_buffer, payload_size)) != 0)
     {
       LogError("Failed sending telemetry.");
       return RESULT_ERROR;
+    }
+    else
+    {
+      LogInfo("Telemetry sent.");
     }
   }
   else if(last_telemetry_send_time == INDEFINITE_TIME){

@@ -442,8 +442,11 @@ static void sync_device_clock_with_ntp_server()
 
 static void connect_to_wifi()
 {
+  LogInfo("ESP Board MAC Address: %s", WiFi.macAddress().c_str());
   LogInfo("Connecting to WIFI wifi_ssid %s", wifi_ssid);
 
+  Serial.println(WiFi.macAddress());
+  unsigned long start = millis();
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifi_ssid, wifi_password);
   while (WiFi.status() != WL_CONNECTED)
@@ -460,6 +463,10 @@ static void connect_to_wifi()
     delay(100);
     Serial.print(".");
     displayMsg("Connecting to WIFI...");
+     if (millis() - start > WIFI_CONNECTION_TIMEOUT_IN_SECONDS * 1000) { // Timeout after 60 seconds
+      Serial.println("Connection failed. Restarting...");
+      ESP.restart();
+    }
   }
   digitalWrite(STATUS_LED, LOW);
   displayMsg("WIFI Connected!");

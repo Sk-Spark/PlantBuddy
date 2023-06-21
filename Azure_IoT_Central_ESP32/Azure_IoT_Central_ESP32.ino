@@ -54,9 +54,6 @@
 #include "Azure_IoT_PnP_Template.h"
 #include "iot_configs.h"
 
-// OLed Display
-#include "oled_display.h"
-
 /* --- Sample-specific Settings --- */
 #define SERIAL_LOGGER_BAUD_RATE 115200
 #define MQTT_DO_NOT_RETAIN_MSG  0
@@ -104,7 +101,7 @@ static uint8_t az_iot_data_buffer[AZ_IOT_DATA_BUFFER_SIZE];
 static uint32_t properties_request_id = 0;
 static bool send_device_info = true;
 
-#define STATUS_LED 2
+#define STATUS_LED 5
 
 /* --- MQTT Interface Functions --- */
 /*
@@ -304,7 +301,8 @@ void on_properties_received(az_span properties)
 /*
  * See the documentation of `command_request_received_t` in AzureIoT.h for details.
  */
-static void on_command_request_received(command_request_t command){  
+static void on_command_request_received(command_request_t command)
+{  
   az_span component_name = az_span_size(command.component_name) == 0 ? AZ_SPAN_FROM_STR("") : command.component_name;
   
   LogInfo("Command request received (id=%.*s, component=%.*s, name=%.*s)", 
@@ -325,9 +323,10 @@ void setup()
   Serial.begin(SERIAL_LOGGER_BAUD_RATE);
   set_logging_function(logging_function);
 
-  azure_pnp_init();  
   connect_to_wifi();
   sync_device_clock_with_ntp_server();
+
+  azure_pnp_init();
 
   /* 
    * The configuration structure used by Azure IoT must remain unchanged (including data buffer) 
@@ -411,7 +410,7 @@ void loop()
 
     azure_iot_do_work(&azure_iot);
   }
-  // water_pump_handler();
+  water_pump_handler();
 }
 
 
@@ -442,36 +441,17 @@ static void sync_device_clock_with_ntp_server()
 
 static void connect_to_wifi()
 {
-  LogInfo("ESP Board MAC Address: %s", WiFi.macAddress().c_str());
   LogInfo("Connecting to WIFI wifi_ssid %s", wifi_ssid);
 
-  Serial.println(WiFi.macAddress());
-  unsigned long start = millis();
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifi_ssid, wifi_password);
   while (WiFi.status() != WL_CONNECTED)
   {
-    digitalWrite(STATUS_LED, LOW);
-    delay(100);
-    digitalWrite(STATUS_LED, HIGH);
-    delay(100);
-    digitalWrite(STATUS_LED, LOW);
-    delay(100);
-    digitalWrite(STATUS_LED, HIGH);
-    delay(100);
-    digitalWrite(STATUS_LED, LOW);
-    delay(100);
+    delay(500);
     Serial.print(".");
-    displayMsg("Connecting to WIFI...");
-     if (millis() - start > WIFI_CONNECTION_TIMEOUT_IN_SECONDS * 1000) { // Timeout after 60 seconds
-      Serial.println("Connection failed. Restarting...");
-      ESP.restart();
-    }
   }
-  digitalWrite(STATUS_LED, LOW);
-  displayMsg("WIFI Connected!");
-  delay(1000);
-  displayMsg("IP:\n"+WiFi.localIP().toString());
+
+  Serial.println("");
 
   LogInfo("WiFi connected, IP address: %s", WiFi.localIP().toString().c_str());
 }

@@ -105,6 +105,7 @@ DHT dht(DHTPIN, DHTTYPE);
 static time_t last_soil_moisture_read_time = INDEFINITE_TIME;
 uint soil_moisture_read = 0;
 int soil_moisture_pot1 = 0;
+int water_level = 0;
 float soil_moisture_pot1_avg = 0;
 bool sendTelemeteryNow = false;
 
@@ -120,6 +121,8 @@ int POT1_MOISTURE_THRESHOLD = 0;
 static bool water_pot1 = false;
 static unsigned long pump1_ran_at = 0;
 
+// --- Water Level Sensor --- //
+#define WATER_LEVEL_SENSOR_PIN 35
 
 /* --- Function Prototypes --- */
 /* Please find the function implementations at the bottom of this file */
@@ -141,8 +144,9 @@ void azure_pnp_init()
   // --- DHT Sensor ---
   dht.begin();
   pinMode(PUMP1_PIN, OUTPUT);
-  pinMode(POT1_PIN, INPUT);
   digitalWrite(PUMP1_PIN, LOW);
+  pinMode(POT1_PIN, INPUT);
+  pinMode(WATER_LEVEL_SENSOR_PIN, INPUT);
   
   // --- OLED Display ----
   setupDisplay();
@@ -195,6 +199,12 @@ static float get_humidity()
   return dht.readHumidity();
 }
 
+static boolean getWaterLevel(){
+  int water_level = digitalRead(WATER_LEVEL_SENSOR_PIN);
+  LogInfo("Water Level sensor value: %d", water_level);
+  return water_level;
+}
+
 static int get_soil_moisture_pot1(){
   int moisture_value = analogRead(POT1_PIN);
   LogInfo("pot1 moisture value: %d", moisture_value);
@@ -220,19 +230,32 @@ static bool is_pump_on(){
 // For turning on and off pump
 void water_pump_handler(){
   if(water_pot1 == true){
-    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS) && is_pump_on()){
+    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS) && is_pump_on()){ // stopping pump after set duration if it is on
       turn_pump_on(false);
       LogInfo("Pump turned OFF. [Over run]");
     }
-    else if((millis() < (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)) && !is_pump_on()){
+    else if((millis() < (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)) && !is_pump_on()){ // starting pump if not ran  for set duration and it is off
+     if(water_level == 1){
       turn_pump_on(true);
       LogInfo("Pump is ON.");
+     }     
+     else{
+      pump1_ran_at = 0;
+      LogInfo("Pump not turned ON. [Water level low]");
+     }
     }
   }
   else if(water_pot1 == false && is_pump_on()){
     turn_pump_on(false);
-    LogInfo("Pump turned OFF. [flag OFF]");
+    LogInfo("Pump turned OFF. [Flag OFF]");
   }
+  
+  // Checking if water level is low and pump is on
+  if(water_level == 0 && is_pump_on()){
+    turn_pump_on(false);
+    pump1_ran_at = 0;
+    LogInfo("Pump turned OFF. [Water level low]");
+  } 
 }
 
 // For sending telemetry now
@@ -256,6 +279,10 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
   
   if(last_soil_moisture_read_time == INDEFINITE_TIME || difftime(now, last_soil_moisture_read_time) >= SOIL_MOISTURE_READ_FREQUENCY_IN_SECONDS)
   {
+    // Reading water level
+    water_level = getWaterLevel();
+    LogInfo("Water Level : %d", water_level);
+
     last_soil_moisture_read_time = now;
     // Read soil moisture here.
     soil_moisture_pot1 = get_soil_moisture_pot1();
@@ -433,6 +460,7 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   LogInfo("Humidity: %f", humidity);
   LogInfo("pot1 sensor avg value: %.0f", soil_moisture_pot1_avg);
   LogInfo("pot1 moiture: %d%%", soil_moisture_pot1_percent);
+  LogInfo("Water Level low: %d", water_level);
 
   displayToLed(temperature, soil_moisture_pot1_percent);
 
@@ -471,6 +499,11 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property name to telemetry payload.");
   rc = az_json_writer_append_int32(&jw, water_pot1);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property value to telemetry payload. ");
+  // Water Level telemetry
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("water_level_low"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding water_level_low property name to telemetry payload.");
+  rc = az_json_writer_append_int32(&jw, water_level);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding water_level_low property value to telemetry payload. ");
 
   rc = az_json_writer_append_end_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing telemetry json payload.");

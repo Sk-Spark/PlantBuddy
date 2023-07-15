@@ -24,6 +24,10 @@
 #define EEPROM_SIZE 5 // 5 bytes for storing pot moisture threshold
 #define EEPROM_ADDR_POT1_MOISTURE_THRESHOLD 0 // 1st byte for storing pot moisture threshold
 
+// Soil mpisture sensor
+// #define OLD_SOIL_MOISTURE_SENSOR  // Use old soil moisture sensor
+#define NEW_SOIL_MOISTURE_SENSOR  // Use new soil moisture sensor
+
 
 /* --- Defines --- */
 // #define AZURE_PNP_MODEL_ID "dtmi:azureiot:devkit:freertos:Esp32AzureIotKit;1"
@@ -49,9 +53,17 @@
 #define SAMPLE_TOTAL_STORAGE_PROPERTY_VALUE            4096
 #define SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE             8192
 
-//soil moisture values
-#define MAX_SOIL_MOISTURE                              900 // 100% soil moisture
-#define MIN_SOIL_MOISTURE                              2500 // 0% soil moisture
+#ifdef OLD_SOIL_MOISTURE_SENSOR
+  //soil moisture values Old sensore
+  #define MAX_SOIL_MOISTURE                              1900 // 100% soil moisture
+  #define MIN_SOIL_MOISTURE                              3500 // 0% soil moisture
+#endif
+
+#ifdef NEW_SOIL_MOISTURE_SENSOR
+  //soil moisture values new sensor
+  #define MAX_SOIL_MOISTURE                              900 // 100% soil moisture
+  #define MIN_SOIL_MOISTURE                              2500 // 0% soil moisture
+#endif
 
 #define TELEMETRY_PROP_NAME_TEMPERATURE                "temperature"
 #define TELEMETRY_PROP_NAME_SOIL_MOISTURE_POT1         "pot1"

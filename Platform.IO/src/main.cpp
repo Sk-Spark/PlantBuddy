@@ -104,6 +104,20 @@ static uint8_t az_iot_data_buffer[AZ_IOT_DATA_BUFFER_SIZE];
 static uint32_t properties_request_id = 0;
 static bool send_device_info = true;
 
+// Deferred command processing - commands are saved in the callback and processed in loop()
+static bool pending_command = false;
+#define PENDING_CMD_BUFFER_SIZE 256
+static uint8_t pending_cmd_request_id_buf[32];
+static uint8_t pending_cmd_name_buf[64];
+static uint8_t pending_cmd_payload_buf[PENDING_CMD_BUFFER_SIZE];
+static command_request_t pending_cmd;
+
+// Error tracking for automatic restart
+static uint32_t mqtt_auth_error_count = 0;
+static unsigned long last_mqtt_auth_error_time = 0;
+#define MAX_MQTT_AUTH_ERRORS 5
+#define MQTT_ERROR_RESET_INTERVAL 30000  // Reset error count after 30 seconds
+
 #define STATUS_LED 2
 
 /* --- MQTT Interface Functions --- */
@@ -312,10 +326,28 @@ static void on_command_request_received(command_request_t command){
     az_span_size(component_name), az_span_ptr(component_name),
     az_span_size(command.command_name), az_span_ptr(command.command_name));
 
-  // Here the request is being processed within the callback that delivers the command request.
-  // However, for production application the recommendation is to save `command` and process it outside
-  // this callback, usually inside the main thread/task/loop.
-  (void)azure_pnp_handle_command_request(&azure_iot, command);
+  // Save command for deferred processing in the main loop.
+  // Copy the az_span data into local buffers since the original pointers
+  // reference the MQTT receive buffer which will be reused.
+  if (!pending_command) {
+    az_span rid_buf = AZ_SPAN_FROM_BUFFER(pending_cmd_request_id_buf);
+    az_span_copy(rid_buf, command.request_id);
+    pending_cmd.request_id = az_span_slice(rid_buf, 0, az_span_size(command.request_id));
+
+    az_span name_buf = AZ_SPAN_FROM_BUFFER(pending_cmd_name_buf);
+    az_span_copy(name_buf, command.command_name);
+    pending_cmd.command_name = az_span_slice(name_buf, 0, az_span_size(command.command_name));
+
+    az_span pay_buf = AZ_SPAN_FROM_BUFFER(pending_cmd_payload_buf);
+    az_span_copy(pay_buf, command.payload);
+    pending_cmd.payload = az_span_slice(pay_buf, 0, az_span_size(command.payload));
+
+    pending_cmd.component_name = command.component_name;
+
+    pending_command = true;
+  } else {
+    LogError("Command dropped - previous command still pending.");
+  }
 }
 
 /* --- Arduino setup and loop Functions --- */
@@ -410,8 +442,17 @@ void loop()
     }
 
     azure_iot_do_work(&azure_iot);
+
+    // Process pending command AFTER azure_iot_do_work, so the MQTT event handler
+    // that delivered the command has fully completed and released its internal mutex.
+    if (pending_command) {
+      delay(50);  // Let MQTT stack settle after receiving the command message
+      (void)azure_pnp_handle_command_request(&azure_iot, pending_cmd);
+      pending_command = false;
+    }
   }
-  // water_pump_handler();
+
+  delay(50);  // Throttle main loop to ~20 iterations/sec, prevents starving the MQTT/WiFi tasks
 }
 
 
@@ -444,6 +485,10 @@ static void connect_to_wifi()
 {
   LogInfo("ESP Board MAC Address: %s", WiFi.macAddress().c_str());
   LogInfo("Connecting to WIFI wifi_ssid %s", wifi_ssid);
+  
+  WiFi.disconnect(true);  // Disconnect and clear credentials
+  WiFi.mode(WIFI_OFF);     // Turn WiFi off
+  delay(500);
 
   Serial.println(WiFi.macAddress());
   unsigned long start = millis();
@@ -510,8 +555,45 @@ static esp_err_t esp_mqtt_event_handler(esp_mqtt_event_handle_t event)
           LogError("connect_return_code=MQTT_CONNECTION_REFUSE_BAD_USERNAME"); 
           break; 
         case MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED: 
-          LogError("connect_return_code=MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED"); 
-          break; 
+        {
+          LogError("connect_return_code=MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED");
+          
+          // Track authentication errors for automatic restart
+          unsigned long current_time = millis();
+          
+          // Reset error count if it's been a while since the last error
+          if (current_time - last_mqtt_auth_error_time > MQTT_ERROR_RESET_INTERVAL) {
+            mqtt_auth_error_count = 0;
+          }
+          
+          mqtt_auth_error_count++;
+          last_mqtt_auth_error_time = current_time;
+          
+          LogError("MQTT auth error count: %d/%d", mqtt_auth_error_count, MAX_MQTT_AUTH_ERRORS);
+          
+          // Restart ESP32 if we've hit the error limit
+          if (mqtt_auth_error_count >= MAX_MQTT_AUTH_ERRORS) {
+            LogError("Too many MQTT authentication failures. Restarting ESP32...");
+            
+            // Blink LED rapidly to indicate restart
+            for (int i = 0; i < 10; i++) {
+              digitalWrite(STATUS_LED, HIGH);
+              delay(100);
+              digitalWrite(STATUS_LED, LOW);
+              delay(100);
+            }
+            
+            delay(2000);  // Give time for log message to be sent
+            ESP.restart();
+          } else {
+            // Blink LED to indicate auth error
+            digitalWrite(STATUS_LED, HIGH);
+            delay(50);
+            digitalWrite(STATUS_LED, LOW);
+          }
+          
+          break;
+        } 
         default: 
           LogError("connect_return_code=unknown (%d)", event->error_handle->connect_return_code); 
           break; 
@@ -520,6 +602,13 @@ static esp_err_t esp_mqtt_event_handler(esp_mqtt_event_handle_t event)
       break;
     case MQTT_EVENT_CONNECTED:
       LogInfo("MQTT client connected (session_present=%d).", event->session_present);
+      
+      // Reset auth error counter on successful connection
+      mqtt_auth_error_count = 0;
+      LogInfo("MQTT authentication successful - error counter reset.");
+      
+      // Turn on status LED to indicate successful connection
+      digitalWrite(STATUS_LED, HIGH);
 
       if (azure_iot_mqtt_client_connected(&azure_iot) != 0)
       {
@@ -529,6 +618,9 @@ static esp_err_t esp_mqtt_event_handler(esp_mqtt_event_handle_t event)
       break;
     case MQTT_EVENT_DISCONNECTED:
       LogInfo("MQTT client disconnected.");
+      
+      // Turn off status LED to indicate disconnection
+      digitalWrite(STATUS_LED, LOW);
 
       if (azure_iot_mqtt_client_disconnected(&azure_iot) != 0)
       {

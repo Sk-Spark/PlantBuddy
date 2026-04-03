@@ -15,22 +15,14 @@
 // OLed Display
 #include "oled_display.h"
 
-// DTH 11 sensore
-#include <DHT.h>
-#define DHTTYPE DHT11   // DHT 11
-
-// EEPROM for storing pot moisture threshold
+// EEPROM for storing persistent settings
 #include <EEPROM.h>
-#define EEPROM_SIZE 5 // 5 bytes for storing pot moisture threshold
-#define EEPROM_ADDR_POT1_MOISTURE_THRESHOLD 0 // 1st byte for storing pot moisture threshold
-
-// Soil mpisture sensor
-// #define OLD_SOIL_MOISTURE_SENSOR  // Use old soil moisture sensor
-#define NEW_SOIL_MOISTURE_SENSOR  // Use new soil moisture sensor
-
+#define EEPROM_SIZE 22
+#define EEPROM_ADDR_LAST_WATERED_TIME 5       // 4 bytes (address 5-8)
+#define EEPROM_ADDR_PUMP_DURATION 10          // 4 bytes (address 10-13), stored in milliseconds
+#define EEPROM_ADDR_PUMP_INTERVAL 14          // 4 bytes (address 14-17), stored in seconds
 
 /* --- Defines --- */
-// #define AZURE_PNP_MODEL_ID "dtmi:azureiot:devkit:freertos:Esp32AzureIotKit;1"
 #define AZURE_PNP_MODEL_ID "dtmi:azureiot:devkit:freertos:PlantsBuddy;1"
 
 #define SAMPLE_DEVICE_INFORMATION_NAME                 "deviceInformation"
@@ -49,30 +41,15 @@
 #define SAMPLE_OS_NAME_PROPERTY_VALUE                  "FreeRTOS"
 #define SAMPLE_ARCHITECTURE_PROPERTY_VALUE             "ESP32 WROVER-B"
 #define SAMPLE_PROCESSOR_MANUFACTURER_PROPERTY_VALUE   "ESPRESSIF"
-// The next couple properties are in KiloBytes.
 #define SAMPLE_TOTAL_STORAGE_PROPERTY_VALUE            4096
 #define SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE             8192
-
-#ifdef OLD_SOIL_MOISTURE_SENSOR
-  //soil moisture values Old sensore
-  #define MAX_SOIL_MOISTURE                              1900 // 100% soil moisture
-  #define MIN_SOIL_MOISTURE                              3500 // 0% soil moisture
-#endif
-
-#ifdef NEW_SOIL_MOISTURE_SENSOR
-  //soil moisture values new sensor
-  #define MAX_SOIL_MOISTURE                              900 // 100% soil moisture
-  #define MIN_SOIL_MOISTURE                              2500 // 0% soil moisture
-#endif
-
-#define TELEMETRY_PROP_NAME_TEMPERATURE                "temperature"
-#define TELEMETRY_PROP_NAME_SOIL_MOISTURE_POT1         "pot1"
-#define TELEMETRY_PROP_NAME_HUMIDITY                   "humidity"
 
 static az_span COMMAND_NAME_TOGGLE_LED_1 = AZ_SPAN_FROM_STR("ToggleLed1");
 static az_span COMMAND_NAME_TOGGLE_LED_2 = AZ_SPAN_FROM_STR("ToggleLed2");
 static az_span COMMAND_NAME_DISPLAY_TEXT = AZ_SPAN_FROM_STR("DisplayText");
-static az_span COMMAND_NAME_THRESHOLD_UPDATE_POT1 = AZ_SPAN_FROM_STR("ThresholdUpdate_Pot1");
+static az_span COMMAND_NAME_SET_PUMP_DURATION = AZ_SPAN_FROM_STR("SetPumpDuration");
+static az_span COMMAND_NAME_SET_PUMP_INTERVAL = AZ_SPAN_FROM_STR("SetPumpInterval");
+static az_span COMMAND_NAME_TRIGGER_PUMP = AZ_SPAN_FROM_STR("TriggerPump");
 #define COMMAND_RESPONSE_CODE_ACCEPTED                 202
 #define COMMAND_RESPONSE_CODE_REJECTED                 404
 
@@ -109,35 +86,28 @@ static time_t last_telemetry_send_time = INDEFINITE_TIME;
 static bool led1_on = false;
 static bool led2_on = false;
 
-/* --- DHT Sensor --- */
-#define DHTPIN 4 
-DHT dht(DHTPIN, DHTTYPE);
-
-// --- Soil Moisture Sensor Read Interval --- //
-static time_t last_soil_moisture_read_time = INDEFINITE_TIME;
-uint soil_moisture_read = 0;
-int soil_moisture_pot1 = 0;
-int water_level = 0;
-float soil_moisture_pot1_avg = 0;
 bool sendTelemeteryNow = false;
 
-// For Pot 1
-#define POT1_PIN 34
-#define DEFAULT_POT1_MOISTURE_THRESHOLD 65 // Default Pot1 moisture threshold in %, 0-100
-int POT1_MOISTURE_THRESHOLD = 0; 
-
 // --- Pump --- //
-#define PUMP1_PIN 18
-#define PUMP_RUN_DURATION_IN_MILLISECS 1000*10 // 10 seconds
-// static bool run_pump1 = false;
+#define PUMP1_PIN 18                                    // GPIO pin connected to the pump relay/MOSFET
+#define DEFAULT_PUMP_RUN_DURATION_SECS 30               // Default pump run duration per watering cycle (seconds)
+#define DEFAULT_PUMP_RUN_INTERVAL_HOURS 12              // Default minimum time between scheduled pump runs (hours)
+static unsigned long pump_run_duration_ms = DEFAULT_PUMP_RUN_DURATION_SECS * 1000UL;
+static unsigned long pump_run_interval_secs = DEFAULT_PUMP_RUN_INTERVAL_HOURS * 3600UL;
 static bool water_pot1 = false;
 static unsigned long pump1_ran_at = 0;
+static volatile bool triggerPumpRequested = false;
 
-// --- Water Level Sensor --- //
-#define WATER_LEVEL_SENSOR_PIN 35
+// --- Ultrasonic Water Level Sensor (HC-SR04) --- //
+#define ULTRASONIC_TRIG_PIN 26
+#define ULTRASONIC_ECHO_PIN 27
+#define TANK_EMPTY_DISTANCE_CM 30.0   // Distance (cm) when tank is empty
+#define TANK_FULL_DISTANCE_CM 5.0    // Distance (cm) when tank is full
+static float water_level_cm = 0.0;       // Last measured distance in cm
+static int water_level_percent = 0;      // Water level as percentage (0-100%)
+#define WATER_LEVEL_LOW_THRESHOLD 10     // Below this % pump won't run
 
 /* --- Function Prototypes --- */
-/* Please find the function implementations at the bottom of this file */
 static int generate_telemetry_payload(
   uint8_t* payload_buffer, size_t payload_buffer_size, size_t* payload_buffer_length);
 static int generate_device_info_payload(
@@ -146,38 +116,46 @@ static int generate_device_info_payload(
 static int consume_properties_and_generate_response(
   azure_iot_t* azure_iot, az_span properties,
   uint8_t* buffer, size_t buffer_size, size_t* response_length);
-
-static void readSoilMoistureThresholdFromEEPROM();
+static void readPumpSettingsFromEEPROM();
 
 /* --- Public Functions --- */
 void azure_pnp_init()
 {
   LogInfo("Initializing Azure IoT PnP Client");
-  // --- DHT Sensor ---
-  dht.begin();
   pinMode(PUMP1_PIN, OUTPUT);
   digitalWrite(PUMP1_PIN, LOW);
-  pinMode(POT1_PIN, INPUT);
-  pinMode(WATER_LEVEL_SENSOR_PIN, INPUT);
-  
-  // --- OLED Display ----
+  pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
+  pinMode(ULTRASONIC_ECHO_PIN, INPUT);
+
   setupDisplay();
 
-  // initialize EEPROM with predefined size
   EEPROM.begin(EEPROM_SIZE);
-  readSoilMoistureThresholdFromEEPROM();
+  readPumpSettingsFromEEPROM();
 }
 
-void readSoilMoistureThresholdFromEEPROM(){
-  // read the soil moisture threshold from EEPROM
-  POT1_MOISTURE_THRESHOLD = EEPROM.read(EEPROM_ADDR_POT1_MOISTURE_THRESHOLD);
-  if(POT1_MOISTURE_THRESHOLD<0 || POT1_MOISTURE_THRESHOLD>100){
-    POT1_MOISTURE_THRESHOLD = DEFAULT_POT1_MOISTURE_THRESHOLD;
-    EEPROM.write(EEPROM_ADDR_POT1_MOISTURE_THRESHOLD, POT1_MOISTURE_THRESHOLD);
+static void readPumpSettingsFromEEPROM(){
+  unsigned long stored_duration_ms;
+  EEPROM.get(EEPROM_ADDR_PUMP_DURATION, stored_duration_ms);
+  if(stored_duration_ms >= 1000UL && stored_duration_ms <= 300000UL){
+    pump_run_duration_ms = stored_duration_ms;
+  } else {
+    pump_run_duration_ms = DEFAULT_PUMP_RUN_DURATION_SECS * 1000UL;
+    EEPROM.put(EEPROM_ADDR_PUMP_DURATION, pump_run_duration_ms);
     EEPROM.commit();
   }
-  LogInfo("Pot1 moisture threshold [From EEPROM]: %d %%", POT1_MOISTURE_THRESHOLD);
-} 
+  LogInfo("Pump run duration [From EEPROM]: %lu ms (%lu secs)", pump_run_duration_ms, pump_run_duration_ms / 1000);
+
+  unsigned long stored_interval_secs;
+  EEPROM.get(EEPROM_ADDR_PUMP_INTERVAL, stored_interval_secs);
+  if(stored_interval_secs >= 3600UL && stored_interval_secs <= 259200UL){
+    pump_run_interval_secs = stored_interval_secs;
+  } else {
+    pump_run_interval_secs = DEFAULT_PUMP_RUN_INTERVAL_HOURS * 3600UL;
+    EEPROM.put(EEPROM_ADDR_PUMP_INTERVAL, pump_run_interval_secs);
+    EEPROM.commit();
+  }
+  LogInfo("Pump run interval [From EEPROM]: %lu secs (%lu hours)", pump_run_interval_secs, pump_run_interval_secs / 3600);
+}
 
 const az_span azure_pnp_get_model_id()
 {
@@ -191,40 +169,9 @@ void azure_pnp_set_telemetry_frequency(size_t frequency_in_seconds)
 }
 
 /* --- Internal Functions --- */
-static int map_soil_moisture_value(int moisture_value){
- int percent = map(moisture_value, MAX_SOIL_MOISTURE , MIN_SOIL_MOISTURE, 100, 0);
-  if(percent < 0)
-    percent = 0;
-  else if(percent > 100)
-    percent = 100;
-  // Serial.printf("percent: %d%\n",percent);
-  return percent;
-}
-
-static float get_temperature()
-{
-  return dht.readTemperature();
-}
-
-static float get_humidity()
-{
-  return dht.readHumidity();
-}
-
-static boolean getWaterLevel(){
-  int water_level = digitalRead(WATER_LEVEL_SENSOR_PIN);
-  LogInfo("Water Level sensor value: %d", water_level);
-  return water_level;
-}
-
-static int get_soil_moisture_pot1(){
-  int moisture_value = analogRead(POT1_PIN);
-  LogInfo("pot1 moisture value: %d", moisture_value);
-  return moisture_value;
-}
 
 static void turn_pump_on(bool value){
-  if(value == true){
+  if(value){
     digitalWrite(PUMP1_PIN, HIGH);
     LogInfo("Turning Pump ON.");
   }
@@ -235,47 +182,118 @@ static void turn_pump_on(bool value){
 }
 
 static bool is_pump_on(){
-  bool pin_state = digitalRead(PUMP1_PIN);
-  return pin_state;
+  return digitalRead(PUMP1_PIN);
 }
 
-// For turning on and off pump
-void water_pump_handler(){
-  if(water_pot1 == true){
-    if(millis() > (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS) && is_pump_on()){ // stopping pump after set duration if it is on
-      turn_pump_on(false);
-      LogInfo("Pump turned OFF. [Over run]");
-    }
-    else if((millis() < (pump1_ran_at + PUMP_RUN_DURATION_IN_MILLISECS)) && !is_pump_on()){ // starting pump if not ran  for set duration and it is off
-     if(water_level == 1){
-      turn_pump_on(true);
-      LogInfo("Pump is ON.");
-     }     
-     else{
-      pump1_ran_at = 0;
-      LogInfo("Pump not turned ON. [Water level low]");
-     }
-    }
-  }
-  else if(water_pot1 == false && is_pump_on()){
-    turn_pump_on(false);
-    LogInfo("Pump turned OFF. [Flag OFF]");
-  }
-  
-  // Checking if water level is low and pump is on
-  if(water_level == 0 && is_pump_on()){
-    turn_pump_on(false);
-    pump1_ran_at = 0;
-    LogInfo("Pump turned OFF. [Water level low]");
-  } 
+static float measureDistanceCm() {
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+
+  long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 30000); // 30ms timeout
+  if (duration == 0) return -1.0; // No echo received
+  return (duration * 0.0343) / 2.0;
 }
 
-// For sending telemetry now
+static void updateWaterLevel() {
+  float dist = measureDistanceCm();
+  if (dist < 0) {
+    LogError("Ultrasonic sensor: no echo.");
+    return;
+  }
+  water_level_cm = dist;
+  // Map distance to percentage: closer = fuller
+  if (dist <= TANK_FULL_DISTANCE_CM) water_level_percent = 100;
+  else if (dist >= TANK_EMPTY_DISTANCE_CM) water_level_percent = 0;
+  else water_level_percent = (int)(100.0 * (TANK_EMPTY_DISTANCE_CM - dist) / (TANK_EMPTY_DISTANCE_CM - TANK_FULL_DISTANCE_CM));
+}
+
+static void writeLastRunTime(unsigned long lastRunTime) {
+    EEPROM.put(EEPROM_ADDR_LAST_WATERED_TIME, lastRunTime);
+    EEPROM.commit();
+}
+
+static unsigned long readLastRunTime() {
+    unsigned long lastRunTime;
+    EEPROM.get(EEPROM_ADDR_LAST_WATERED_TIME, lastRunTime);
+    return lastRunTime;
+}
+
 void setSendTelemetryNow(){
   sendTelemeteryNow = true;
 }
 
-/* Application-specific data section */
+static bool shouldRunPump() {
+    time_t now = time(NULL);
+    unsigned long currentEpochTime = (unsigned long)now;
+    unsigned long lastRunTime = readLastRunTime();
+    unsigned long timeDifference = currentEpochTime - lastRunTime;
+
+    if(timeDifference >= pump_run_interval_secs){
+      LogInfo("Pump interval elapsed: %lu >= %lu", timeDifference, pump_run_interval_secs);
+      writeLastRunTime(currentEpochTime);
+      delay(10);
+      setSendTelemetryNow();
+      pump1_ran_at = millis();
+      return true;
+    }
+
+    return (timeDifference <= (pump_run_duration_ms / 1000));
+}
+
+void water_pump_handler(){
+  // Update water level reading
+  updateWaterLevel();
+
+  // Handle deferred TriggerPump command from IoT Central
+  if (triggerPumpRequested) {
+    triggerPumpRequested = false;
+    if (water_level_percent < WATER_LEVEL_LOW_THRESHOLD) {
+      LogError("Pump trigger rejected: water level too low (%d%%).", water_level_percent);
+      return;
+    }
+    water_pot1 = true;
+    pump1_ran_at = millis();
+    writeLastRunTime((unsigned long)time(NULL));
+    delay(10);
+    turn_pump_on(true);
+    setSendTelemetryNow();
+    LogInfo("Pump started via TriggerPump command.");
+    return;
+  }
+
+  // Safety: stop pump if water level is critically low
+  if (water_level_percent < WATER_LEVEL_LOW_THRESHOLD && is_pump_on()) {
+    turn_pump_on(false);
+    water_pot1 = false;
+    setSendTelemetryNow();
+    LogError("Pump stopped: water level low (%d%%).", water_level_percent);
+    return;
+  }
+
+  water_pot1 = shouldRunPump();
+
+  if(water_pot1){
+    if(millis() > (pump1_ran_at + pump_run_duration_ms) && is_pump_on()){
+      turn_pump_on(false);
+      setSendTelemetryNow();
+      LogInfo("Pump turned OFF. [Duration complete]");
+    }
+    else if(millis() < (pump1_ran_at + pump_run_duration_ms) && !is_pump_on()){
+      turn_pump_on(true);
+      LogInfo("Pump is ON.");
+    }
+  }
+  else if(!water_pot1 && is_pump_on()){
+    turn_pump_on(false);
+    setSendTelemetryNow();
+    LogInfo("Pump turned OFF.");
+  }
+}
+
+/* --- Telemetry and Device Info --- */
 
 int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
 {
@@ -288,45 +306,11 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
     LogError("Failed getting current time for controlling telemetry.");
     return RESULT_ERROR;
   }
-  
-  if(last_soil_moisture_read_time == INDEFINITE_TIME || difftime(now, last_soil_moisture_read_time) >= SOIL_MOISTURE_READ_FREQUENCY_IN_SECONDS)
-  {
-    // Reading water level
-    water_level = getWaterLevel();
-    LogInfo("Water Level : %d", water_level);
 
-    last_soil_moisture_read_time = now;
-    // Read soil moisture here.
-    soil_moisture_pot1 = get_soil_moisture_pot1();
-    ++soil_moisture_read;
-    // Calculate average soil moisture
-    soil_moisture_pot1_avg += (soil_moisture_pot1 - soil_moisture_pot1_avg ) / soil_moisture_read;
-    int soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1_avg); 
-    LogInfo("Soil Moisture read: %d / %d -> avg: %f -> percent: %d%%",soil_moisture_pot1, soil_moisture_read, soil_moisture_pot1_avg, soil_moisture_pot1_percent); 
-       
-    // Checking and setting if pump needs to be run
-    if( water_pot1 != true && soil_moisture_pot1_percent < (POT1_MOISTURE_THRESHOLD)){
-      water_pot1 = true;
-      pump1_ran_at = millis();
-      LogInfo("Start watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
-      // setSendTelemetryNow();
-    }
-    else if( water_pot1 == true){
-      if(soil_moisture_pot1_percent >= (POT1_MOISTURE_THRESHOLD + 5)){
-        water_pot1 = false;
-        LogInfo("Stop watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
-        // setSendTelemetryNow();
-      }
-      else{
-        pump1_ran_at = millis();
-        LogInfo("Continue watering Pot 1 [Moist: %d %%].", soil_moisture_pot1_percent);
-      }
-    }
-  }
-  // Turn pump on and off
+  // Run pump handler every cycle
   water_pump_handler();
 
-  if ( sendTelemeteryNow || (last_telemetry_send_time != INDEFINITE_TIME && difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds))
+  if (sendTelemeteryNow || (last_telemetry_send_time != INDEFINITE_TIME && difftime(now, last_telemetry_send_time) >= telemetry_frequency_in_seconds))
   {
     size_t payload_size;
 
@@ -338,19 +322,14 @@ int azure_pnp_send_telemetry(azure_iot_t* azure_iot)
       LogError("Failed generating telemetry payload.");
       return RESULT_ERROR;
     }
-    else{
-      LogInfo("Telemetry payload generated.");
-    }
 
     if (azure_iot_send_telemetry(azure_iot, az_span_create(data_buffer, payload_size)) != 0)
     {
       LogError("Failed sending telemetry.");
       return RESULT_ERROR;
     }
-    else
-    {
-      LogInfo("Telemetry sent.");
-    }
+
+    LogInfo("Telemetry sent.");
   }
   else if(last_telemetry_send_time == INDEFINITE_TIME){
     last_telemetry_send_time = now;
@@ -367,13 +346,15 @@ int azure_pnp_send_device_info(azure_iot_t* azure_iot, uint32_t request_id)
   size_t length;  
     
   result = generate_device_info_payload(&azure_iot->iot_hub_client, data_buffer, DATA_BUFFER_SIZE, &length);
-  EXIT_IF_TRUE(result != RESULT_OK, RESULT_ERROR, "Failed generating telemetry payload.");
+  EXIT_IF_TRUE(result != RESULT_OK, RESULT_ERROR, "Failed generating device info payload.");
 
   result = azure_iot_send_properties_update(azure_iot, request_id, az_span_create(data_buffer, length));
   EXIT_IF_TRUE(result != RESULT_OK, RESULT_ERROR, "Failed sending reported properties update.");
 
   return RESULT_OK;
 }
+
+/* --- Command Handling --- */
 
 int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t command)
 {
@@ -385,7 +366,6 @@ int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t c
   {
     led1_on = !led1_on;
     LogInfo("LED 1 state: %s", (led1_on ? "ON" : "OFF"));
-    LogInfo("Command not recognized (%.*s).", az_span_size(command.command_name), az_span_ptr(command.command_name));
     response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
   }
   else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_TOGGLE_LED_2))
@@ -396,35 +376,52 @@ int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t c
   }
   else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_DISPLAY_TEXT))
   {
-    // The payload comes surrounded by quotes, so to remove them we offset the payload by 1 and its size by 2.
     LogInfo("OLED display: %.*s", az_span_size(command.payload) - 2, az_span_ptr(command.payload) + 1);
     response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
   }
-  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_THRESHOLD_UPDATE_POT1))
+  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_SET_PUMP_DURATION))
   {
     char* parse_string = (char*)az_span_ptr(command.payload);
     parse_string[az_span_size(command.payload)] = '\0';
-    // String parse_string = String(parse_string);
-    int new_threshold = atoi(parse_string);
-    LogInfo("Threshold Update Pot_1: %d, Size:%d", new_threshold, az_span_size(command.payload) );
-    //Check for valid threshold value
-    if(new_threshold < 0 || new_threshold > 100){
-      LogError("Invalid threshold value: %d", new_threshold);
+    int new_duration = atoi(parse_string);
+    LogInfo("SetPumpDuration: %d seconds", new_duration);
+    if (new_duration < 1 || new_duration > 300) {
+      LogError("Invalid pump duration: %d (must be 1-300)", new_duration);
       response_code = COMMAND_RESPONSE_CODE_REJECTED;
-      return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid threshold value") );
+      return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid duration (1-300 secs)"));
     }
-    else{
-      // POT1_MOISTURE_THRESHOLD = new_threshold;
-      LogInfo("New threshold value: %d", new_threshold);
-      POT1_MOISTURE_THRESHOLD = new_threshold;
-      response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
-    }
-
-    // Update threshold value to EEPROM
-    EEPROM.put(EEPROM_ADDR_POT1_MOISTURE_THRESHOLD, new_threshold);
+    pump_run_duration_ms = (unsigned long)new_duration * 1000UL;
+    EEPROM.put(EEPROM_ADDR_PUMP_DURATION, pump_run_duration_ms);
     EEPROM.commit();
+    delay(10);
+    LogInfo("Pump duration updated to %d secs", new_duration);
     response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
-    setSendTelemetryNow(); // To send telemetry with new threshold value
+    setSendTelemetryNow();
+  }
+  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_SET_PUMP_INTERVAL))
+  {
+    char* parse_string = (char*)az_span_ptr(command.payload);
+    parse_string[az_span_size(command.payload)] = '\0';
+    int new_interval = atoi(parse_string);
+    LogInfo("SetPumpInterval: %d hours", new_interval);
+    if (new_interval < 1 || new_interval > 72) {
+      LogError("Invalid pump interval: %d (must be 1-72)", new_interval);
+      response_code = COMMAND_RESPONSE_CODE_REJECTED;
+      return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid interval (1-72 hours)"));
+    }
+    pump_run_interval_secs = (unsigned long)new_interval * 3600UL;
+    EEPROM.put(EEPROM_ADDR_PUMP_INTERVAL, pump_run_interval_secs);
+    EEPROM.commit();
+    delay(10);
+    LogInfo("Pump interval updated to %d hours", new_interval);
+    response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    setSendTelemetryNow();
+  }
+  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_TRIGGER_PUMP))
+  {
+    triggerPumpRequested = true;
+    LogInfo("Pump trigger requested.");
+    response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
   }
   else
   {
@@ -452,70 +449,49 @@ int azure_pnp_handle_properties_update(azure_iot_t* azure_iot, az_span propertie
   return RESULT_OK;
 }
 
+/* --- Payload generation functions --- */
+
 static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_buffer_size, size_t* payload_buffer_length)
 {
   az_json_writer jw;
   az_result rc;
   az_span payload_buffer_span = az_span_create(payload_buffer, payload_buffer_size);
-  az_span json_span;
-  float temperature, humidity, light, pressure, altitude;
-  int soil_moisture_pot1_percent;
-  int32_t magneticFieldX, magneticFieldY, magneticFieldZ;
-  int32_t pitch, roll, accelerationX, accelerationY, accelerationZ;
-
-  humidity = get_humidity();
-  temperature = get_temperature();
-  soil_moisture_pot1_percent = map_soil_moisture_value(soil_moisture_pot1_avg);
-
-  // Logging the values
-  LogInfo("Temp: %f °C", temperature);
-  LogInfo("Humidity: %f", humidity);
-  LogInfo("pot1 sensor avg value: %.0f", soil_moisture_pot1_avg);
-  LogInfo("pot1 moiture: %d%%", soil_moisture_pot1_percent);
-  LogInfo("Water Level low: %d", water_level);
-
-  displayToLed(temperature, soil_moisture_pot1_percent);
 
   rc = az_json_writer_init(&jw, payload_buffer_span, NULL);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed initializing json writer for telemetry.");
 
   rc = az_json_writer_append_begin_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed setting telemetry json root.");
-  // Temperature telemetry
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_TEMPERATURE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding temperature property name to telemetry payload.");
-  rc = az_json_writer_append_double(&jw, temperature, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding temperature property value to telemetry payload. ");
-  // Humidity telemetry
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(TELEMETRY_PROP_NAME_HUMIDITY));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding humidity property name to telemetry payload.");
-  rc = az_json_writer_append_double(&jw, humidity, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding humidity property value to telemetry payload. ");
-  // Soil moisture telemetry in percent
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pot1_moisture_percent"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, soil_moisture_pot1_percent);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property value to telemetry payload. ");
-  // Soil moisture telemetry raw sensor value
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pot1_moisture_sensore_value"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, soil_moisture_pot1_avg);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding soil_moisture_pot1 property value to telemetry payload. ");
-  // Thresholds telemetry
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("threshold1"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding thrshold for pot1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, POT1_MOISTURE_THRESHOLD);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding thrshold for pot1 property value to telemetry payload. ");
-  // Pump1 telemetry
+
+  // Pump status
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pump1"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, water_pot1);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property value to telemetry payload. ");
-  // Water Level telemetry
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("water_level_low"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding water_level_low property name to telemetry payload.");
-  rc = az_json_writer_append_int32(&jw, water_level);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding water_level_low property value to telemetry payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property name.");
+  rc = az_json_writer_append_int32(&jw, is_pump_on() ? 1 : 0);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pump1 property value.");
+
+  // Pump duration (seconds)
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpRunDurationSecs"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunDurationSecs.");
+  rc = az_json_writer_append_int32(&jw, pump_run_duration_ms / 1000);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunDurationSecs value.");
+
+  // Pump interval (hours)
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpRunIntervalHours"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours.");
+  rc = az_json_writer_append_int32(&jw, pump_run_interval_secs / 3600);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours value.");
+
+  // Water level (%)
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("waterLevelPercent"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelPercent.");
+  rc = az_json_writer_append_int32(&jw, water_level_percent);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelPercent value.");
+
+  // Water level distance (cm)
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("waterLevelDistCm"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelDistCm.");
+  rc = az_json_writer_append_double(&jw, water_level_cm, 1);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelDistCm value.");
 
   rc = az_json_writer_append_end_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing telemetry json payload.");
@@ -531,10 +507,6 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   payload_buffer[az_span_size(payload_buffer_span)] = null_terminator;
   *payload_buffer_length = az_span_size(payload_buffer_span);
 
-  // Resetting the soil moisture read count and average
-  soil_moisture_pot1_avg = 0;
-  soil_moisture_read = 0;
- 
   return RESULT_OK;
 }
 
@@ -543,74 +515,83 @@ static int generate_device_info_payload(az_iot_hub_client const* hub_client, uin
   az_json_writer jw;
   az_result rc;
   az_span payload_buffer_span = az_span_create(payload_buffer, payload_buffer_size);
-  az_span json_span;
 
   rc = az_json_writer_init(&jw, payload_buffer_span, NULL);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed initializing json writer for telemetry.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed initializing json writer for device info.");
 
   rc = az_json_writer_append_begin_object(&jw);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed setting telemetry json root.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed setting device info json root.");
   
   rc = az_iot_hub_client_properties_writer_begin_component(
     hub_client, &jw, AZ_SPAN_FROM_STR(SAMPLE_DEVICE_INFORMATION_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed writting component name.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed writing component name.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_MANUFACTURER_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_MANUFACTURER_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding manufacturer.");
   rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR(SAMPLE_MANUFACTURER_PROPERTY_VALUE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_MANUFACTURER_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding manufacturer value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_MODEL_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_MODEL_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding model.");
   rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR(SAMPLE_MODEL_PROPERTY_VALUE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_MODEL_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding model value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_SOFTWARE_VERSION_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_SOFTWARE_VERSION_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding swVersion.");
   rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR(SAMPLE_VERSION_PROPERTY_VALUE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_VERSION_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding swVersion value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_OS_NAME_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_OS_NAME_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding osName.");
   rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR(SAMPLE_OS_NAME_PROPERTY_VALUE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_OS_NAME_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding osName value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_PROCESSOR_ARCHITECTURE_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_PROCESSOR_ARCHITECTURE_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding processorArchitecture.");
   rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR(SAMPLE_ARCHITECTURE_PROPERTY_VALUE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_ARCHITECTURE_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding processorArchitecture value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_PROCESSOR_MANUFACTURER_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_PROCESSOR_MANUFACTURER_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding processorManufacturer.");
   rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR(SAMPLE_PROCESSOR_MANUFACTURER_PROPERTY_VALUE));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_PROCESSOR_MANUFACTURER_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding processorManufacturer value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_TOTAL_STORAGE_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_TOTAL_STORAGE_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding totalStorage.");
   rc = az_json_writer_append_double(&jw, SAMPLE_TOTAL_STORAGE_PROPERTY_VALUE, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_TOTAL_STORAGE_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding totalStorage value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR(SAMPLE_TOTAL_MEMORY_PROPERTY_NAME));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_TOTAL_MEMORY_PROPERTY_NAME to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding totalMemory.");
   rc = az_json_writer_append_double(&jw, SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding totalMemory value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("telemeteryFrequency"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding Telemetery Frequency to payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding telemeteryFrequency.");
   rc = az_json_writer_append_double(&jw, TELEMETRY_FREQUENCY_IN_SECONDS, DOUBLE_DECIMAL_PLACE_DIGITS);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding TELEMETRY_FREQUENCY_IN_SECONDS to payload. ");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding telemeteryFrequency value.");
+
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpRunDurationSecs"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunDurationSecs.");
+  rc = az_json_writer_append_int32(&jw, pump_run_duration_ms / 1000);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunDurationSecs value.");
+
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpRunIntervalHours"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours.");
+  rc = az_json_writer_append_int32(&jw, pump_run_interval_secs / 3600);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours value.");
 
   rc = az_iot_hub_client_properties_writer_end_component(hub_client, &jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing component object.");
 
   rc = az_json_writer_append_end_object(&jw);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing telemetry json payload.");
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing device info json payload.");
 
   payload_buffer_span = az_json_writer_get_bytes_used_in_destination(&jw);
 
   if ((payload_buffer_size - az_span_size(payload_buffer_span)) < 1)
   {
-    LogError("Insufficient space for telemetry payload null terminator.");
+    LogError("Insufficient space for device info payload null terminator.");
     return RESULT_ERROR;
   }
 
@@ -635,9 +616,6 @@ static int generate_properties_update_response(
   azrc = az_json_writer_append_begin_object(&jw);
   EXIT_IF_AZ_FAILED(azrc, RESULT_ERROR, "Failed opening json in properties update response.");
 
-  // This Azure PnP Template does not have a named component,
-  // so az_iot_hub_client_properties_writer_begin_component is not needed.
-
   azrc = az_iot_hub_client_properties_writer_begin_response_status(
     &azure_iot->iot_hub_client,
     &jw,
@@ -648,13 +626,10 @@ static int generate_properties_update_response(
   EXIT_IF_AZ_FAILED(azrc, RESULT_ERROR, "Failed appending status to properties update response.");
 
   azrc = az_json_writer_append_int32(&jw, frequency);
-  EXIT_IF_AZ_FAILED(azrc, RESULT_ERROR, "Failed appending frequency value to properties update response.");
+  EXIT_IF_AZ_FAILED(azrc, RESULT_ERROR, "Failed appending frequency value.");
 
   azrc = az_iot_hub_client_properties_writer_end_response_status(&azure_iot->iot_hub_client, &jw);
-  EXIT_IF_AZ_FAILED(azrc, RESULT_ERROR, "Failed closing status section in properties update response.");
-
-  // This Azure PnP Template does not have a named component,
-  // so az_iot_hub_client_properties_writer_end_component is not needed.
+  EXIT_IF_AZ_FAILED(azrc, RESULT_ERROR, "Failed closing status section.");
 
   azrc = az_json_writer_append_end_object(&jw);
   EXIT_IF_AZ_FAILED(azrc, RESULT_ERROR, "Failed closing json in properties update response.");

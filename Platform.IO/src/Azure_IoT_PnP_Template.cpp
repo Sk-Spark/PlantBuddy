@@ -566,9 +566,9 @@ static int generate_device_info_payload(az_iot_hub_client const* hub_client, uin
   rc = az_json_writer_append_double(&jw, SAMPLE_TOTAL_MEMORY_PROPERTY_VALUE, DOUBLE_DECIMAL_PLACE_DIGITS);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding totalMemory value.");
 
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("telemeteryFrequency"));
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("telemeteryFrequencyMins"));
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding telemeteryFrequency.");
-  rc = az_json_writer_append_double(&jw, TELEMETRY_FREQUENCY_IN_SECONDS, DOUBLE_DECIMAL_PLACE_DIGITS);
+  rc = az_json_writer_append_int32(&jw, TELEMETRY_FREQUENCY_IN_SECONDS / 60);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding telemeteryFrequency value.");
 
   rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpRunDurationSecs"));

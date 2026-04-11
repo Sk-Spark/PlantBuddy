@@ -17,10 +17,12 @@
 
 // EEPROM for storing persistent settings
 #include <EEPROM.h>
-#define EEPROM_SIZE 22
+#define EEPROM_SIZE 25
 #define EEPROM_ADDR_LAST_WATERED_TIME 5       // 4 bytes (address 5-8)
 #define EEPROM_ADDR_PUMP_DURATION 10          // 4 bytes (address 10-13), stored in milliseconds
-#define EEPROM_ADDR_PUMP_INTERVAL 14          // 4 bytes (address 14-17), stored in seconds
+#define EEPROM_ADDR_SCHEDULE_HOUR 18          // 1 byte (0-23, 0xFF = disabled)
+#define EEPROM_ADDR_SCHEDULE_MINUTE 19        // 1 byte (0-59)
+#define EEPROM_ADDR_LAST_SCHEDULE_DAY 20      // 1 byte (1-31, day of month when schedule last ran)
 
 /* --- Defines --- */
 #define AZURE_PNP_MODEL_ID "dtmi:azureiot:devkit:freertos:PlantsBuddy;1"
@@ -48,8 +50,8 @@ static az_span COMMAND_NAME_TOGGLE_LED_1 = AZ_SPAN_FROM_STR("ToggleLed1");
 static az_span COMMAND_NAME_TOGGLE_LED_2 = AZ_SPAN_FROM_STR("ToggleLed2");
 static az_span COMMAND_NAME_DISPLAY_TEXT = AZ_SPAN_FROM_STR("DisplayText");
 static az_span COMMAND_NAME_SET_PUMP_DURATION = AZ_SPAN_FROM_STR("SetPumpDuration");
-static az_span COMMAND_NAME_SET_PUMP_INTERVAL = AZ_SPAN_FROM_STR("SetPumpInterval");
 static az_span COMMAND_NAME_TRIGGER_PUMP = AZ_SPAN_FROM_STR("TriggerPump");
+static az_span COMMAND_NAME_SET_PUMP_SCHEDULE = AZ_SPAN_FROM_STR("SetPumpSchedule");
 #define COMMAND_RESPONSE_CODE_ACCEPTED                 202
 #define COMMAND_RESPONSE_CODE_REJECTED                 404
 
@@ -91,21 +93,15 @@ bool sendTelemeteryNow = false;
 // --- Pump --- //
 #define PUMP1_PIN 18                                    // GPIO pin connected to the pump relay/MOSFET
 #define DEFAULT_PUMP_RUN_DURATION_SECS 30               // Default pump run duration per watering cycle (seconds)
-#define DEFAULT_PUMP_RUN_INTERVAL_HOURS 12              // Default minimum time between scheduled pump runs (hours)
 static unsigned long pump_run_duration_ms = DEFAULT_PUMP_RUN_DURATION_SECS * 1000UL;
-static unsigned long pump_run_interval_secs = DEFAULT_PUMP_RUN_INTERVAL_HOURS * 3600UL;
 static bool water_pot1 = false;
 static unsigned long pump1_ran_at = 0;
 static volatile bool triggerPumpRequested = false;
 
-// --- Ultrasonic Water Level Sensor (HC-SR04) --- //
-#define ULTRASONIC_TRIG_PIN 26
-#define ULTRASONIC_ECHO_PIN 27
-#define TANK_EMPTY_DISTANCE_CM 30.0   // Distance (cm) when tank is empty
-#define TANK_FULL_DISTANCE_CM 5.0    // Distance (cm) when tank is full
-static float water_level_cm = 0.0;       // Last measured distance in cm
-static int water_level_percent = 0;      // Water level as percentage (0-100%)
-#define WATER_LEVEL_LOW_THRESHOLD 10     // Below this % pump won't run
+// --- Pump Schedule --- //
+static uint8_t schedule_hour = 6;       // 0xFF = disabled, 0-23 = enabled
+static uint8_t schedule_minute = 0;        // 0-59
+static int last_schedule_trigger_day = -1; // Day of month when schedule last triggered (prevents re-trigger)
 
 /* --- Function Prototypes --- */
 static int generate_telemetry_payload(
@@ -117,6 +113,7 @@ static int consume_properties_and_generate_response(
   azure_iot_t* azure_iot, az_span properties,
   uint8_t* buffer, size_t buffer_size, size_t* response_length);
 static void readPumpSettingsFromEEPROM();
+static void readPumpScheduleFromEEPROM();
 
 /* --- Public Functions --- */
 void azure_pnp_init()
@@ -124,13 +121,12 @@ void azure_pnp_init()
   LogInfo("Initializing Azure IoT PnP Client");
   pinMode(PUMP1_PIN, OUTPUT);
   digitalWrite(PUMP1_PIN, LOW);
-  pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
-  pinMode(ULTRASONIC_ECHO_PIN, INPUT);
 
   setupDisplay();
 
   EEPROM.begin(EEPROM_SIZE);
   readPumpSettingsFromEEPROM();
+  readPumpScheduleFromEEPROM();
 }
 
 static void readPumpSettingsFromEEPROM(){
@@ -144,17 +140,26 @@ static void readPumpSettingsFromEEPROM(){
     EEPROM.commit();
   }
   LogInfo("Pump run duration [From EEPROM]: %lu ms (%lu secs)", pump_run_duration_ms, pump_run_duration_ms / 1000);
+}
 
-  unsigned long stored_interval_secs;
-  EEPROM.get(EEPROM_ADDR_PUMP_INTERVAL, stored_interval_secs);
-  if(stored_interval_secs >= 3600UL && stored_interval_secs <= 259200UL){
-    pump_run_interval_secs = stored_interval_secs;
+static void readPumpScheduleFromEEPROM(){
+  uint8_t stored_hour = EEPROM.read(EEPROM_ADDR_SCHEDULE_HOUR);
+  uint8_t stored_minute = EEPROM.read(EEPROM_ADDR_SCHEDULE_MINUTE);
+  if(stored_hour <= 23 && stored_minute <= 59){
+    schedule_hour = stored_hour;
+    schedule_minute = stored_minute;
+    LogInfo("Pump schedule [From EEPROM]: %02d:%02d", schedule_hour, schedule_minute);
   } else {
-    pump_run_interval_secs = DEFAULT_PUMP_RUN_INTERVAL_HOURS * 3600UL;
-    EEPROM.put(EEPROM_ADDR_PUMP_INTERVAL, pump_run_interval_secs);
-    EEPROM.commit();
+    schedule_hour = 0xFF; // disabled
+    schedule_minute = 0;
+    LogInfo("Pump schedule [From EEPROM]: disabled");
   }
-  LogInfo("Pump run interval [From EEPROM]: %lu secs (%lu hours)", pump_run_interval_secs, pump_run_interval_secs / 3600);
+  // Restore last trigger day to prevent re-triggering after reboot
+  uint8_t stored_day = EEPROM.read(EEPROM_ADDR_LAST_SCHEDULE_DAY);
+  if (stored_day >= 1 && stored_day <= 31) {
+    last_schedule_trigger_day = stored_day;
+    LogInfo("Last schedule trigger day [From EEPROM]: %d", last_schedule_trigger_day);
+  }
 }
 
 const az_span azure_pnp_get_model_id()
@@ -185,31 +190,6 @@ static bool is_pump_on(){
   return digitalRead(PUMP1_PIN);
 }
 
-static float measureDistanceCm() {
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-
-  long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 30000); // 30ms timeout
-  if (duration == 0) return -1.0; // No echo received
-  return (duration * 0.0343) / 2.0;
-}
-
-static void updateWaterLevel() {
-  float dist = measureDistanceCm();
-  if (dist < 0) {
-    LogError("Ultrasonic sensor: no echo.");
-    return;
-  }
-  water_level_cm = dist;
-  // Map distance to percentage: closer = fuller
-  if (dist <= TANK_FULL_DISTANCE_CM) water_level_percent = 100;
-  else if (dist >= TANK_EMPTY_DISTANCE_CM) water_level_percent = 0;
-  else water_level_percent = (int)(100.0 * (TANK_EMPTY_DISTANCE_CM - dist) / (TANK_EMPTY_DISTANCE_CM - TANK_FULL_DISTANCE_CM));
-}
-
 static void writeLastRunTime(unsigned long lastRunTime) {
     EEPROM.put(EEPROM_ADDR_LAST_WATERED_TIME, lastRunTime);
     EEPROM.commit();
@@ -225,35 +205,37 @@ void setSendTelemetryNow(){
   sendTelemeteryNow = true;
 }
 
-static bool shouldRunPump() {
-    time_t now = time(NULL);
-    unsigned long currentEpochTime = (unsigned long)now;
-    unsigned long lastRunTime = readLastRunTime();
-    unsigned long timeDifference = currentEpochTime - lastRunTime;
+static void checkPumpSchedule() {
+  if (schedule_hour == 0xFF) return; // Schedule disabled
 
-    if(timeDifference >= pump_run_interval_secs){
-      LogInfo("Pump interval elapsed: %lu >= %lu", timeDifference, pump_run_interval_secs);
-      writeLastRunTime(currentEpochTime);
-      delay(10);
-      setSendTelemetryNow();
-      pump1_ran_at = millis();
-      return true;
-    }
+  time_t now = time(NULL);
+  struct tm* timeinfo = localtime(&now);
+  if (timeinfo == NULL) return;
 
-    return (timeDifference <= (pump_run_duration_ms / 1000));
+  // Already triggered today
+  if (timeinfo->tm_mday == last_schedule_trigger_day) return;
+
+  // Current time is at or past the scheduled time -> trigger
+  int current_minutes = timeinfo->tm_hour * 60 + timeinfo->tm_min;
+  int schedule_minutes = schedule_hour * 60 + schedule_minute;
+
+  if (current_minutes >= schedule_minutes) {
+    last_schedule_trigger_day = timeinfo->tm_mday;
+    EEPROM.write(EEPROM_ADDR_LAST_SCHEDULE_DAY, (uint8_t)last_schedule_trigger_day);
+    EEPROM.commit();
+    triggerPumpRequested = true;
+    LogInfo("Scheduled pump trigger at %02d:%02d (current %02d:%02d).", 
+      schedule_hour, schedule_minute, timeinfo->tm_hour, timeinfo->tm_min);
+  }
 }
 
 void water_pump_handler(){
-  // Update water level reading
-  updateWaterLevel();
+  // Check if scheduled time has been reached
+  checkPumpSchedule();
 
   // Handle deferred TriggerPump command from IoT Central
   if (triggerPumpRequested) {
     triggerPumpRequested = false;
-    if (water_level_percent < WATER_LEVEL_LOW_THRESHOLD) {
-      LogError("Pump trigger rejected: water level too low (%d%%).", water_level_percent);
-      return;
-    }
     water_pot1 = true;
     pump1_ran_at = millis();
     writeLastRunTime((unsigned long)time(NULL));
@@ -264,29 +246,16 @@ void water_pump_handler(){
     return;
   }
 
-  // Safety: stop pump if water level is critically low
-  if (water_level_percent < WATER_LEVEL_LOW_THRESHOLD && is_pump_on()) {
-    turn_pump_on(false);
-    water_pot1 = false;
-    setSendTelemetryNow();
-    LogError("Pump stopped: water level low (%d%%).", water_level_percent);
-    return;
-  }
-
-  water_pot1 = shouldRunPump();
-
+  // Handle pump stop after duration
   if(water_pot1){
     if(millis() > (pump1_ran_at + pump_run_duration_ms) && is_pump_on()){
       turn_pump_on(false);
+      water_pot1 = false;
       setSendTelemetryNow();
       LogInfo("Pump turned OFF. [Duration complete]");
     }
-    else if(millis() < (pump1_ran_at + pump_run_duration_ms) && !is_pump_on()){
-      turn_pump_on(true);
-      LogInfo("Pump is ON.");
-    }
   }
-  else if(!water_pot1 && is_pump_on()){
+  else if(is_pump_on()){
     turn_pump_on(false);
     setSendTelemetryNow();
     LogInfo("Pump turned OFF.");
@@ -398,30 +367,46 @@ int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t c
     response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
     setSendTelemetryNow();
   }
-  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_SET_PUMP_INTERVAL))
-  {
-    char* parse_string = (char*)az_span_ptr(command.payload);
-    parse_string[az_span_size(command.payload)] = '\0';
-    int new_interval = atoi(parse_string);
-    LogInfo("SetPumpInterval: %d hours", new_interval);
-    if (new_interval < 1 || new_interval > 72) {
-      LogError("Invalid pump interval: %d (must be 1-72)", new_interval);
-      response_code = COMMAND_RESPONSE_CODE_REJECTED;
-      return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid interval (1-72 hours)"));
-    }
-    pump_run_interval_secs = (unsigned long)new_interval * 3600UL;
-    EEPROM.put(EEPROM_ADDR_PUMP_INTERVAL, pump_run_interval_secs);
-    EEPROM.commit();
-    delay(10);
-    LogInfo("Pump interval updated to %d hours", new_interval);
-    response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
-    setSendTelemetryNow();
-  }
   else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_TRIGGER_PUMP))
   {
     triggerPumpRequested = true;
     LogInfo("Pump trigger requested.");
     response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+  }
+  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_SET_PUMP_SCHEDULE))
+  {
+    // SetPumpSchedule: payload is HHMM format (e.g., 630 = 6:30 AM, 1830 = 6:30 PM, -1 = disable)
+    char* parse_string = (char*)az_span_ptr(command.payload);
+    parse_string[az_span_size(command.payload)] = '\0';
+    int value = atoi(parse_string);
+    if (value < 0) {
+      // Disable schedule
+      schedule_hour = 0xFF;
+      schedule_minute = 0;
+      EEPROM.write(EEPROM_ADDR_SCHEDULE_HOUR, 0xFF);
+      EEPROM.write(EEPROM_ADDR_SCHEDULE_MINUTE, 0);
+      EEPROM.commit();
+      delay(10);
+      LogInfo("Pump schedule disabled.");
+      response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    } else {
+      int hour = value / 100;
+      int minute = value % 100;
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        LogError("Invalid schedule: %d (use HHMM, e.g. 630 for 6:30)", value);
+        response_code = COMMAND_RESPONSE_CODE_REJECTED;
+        return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid time (HHMM format)"));
+      }
+      schedule_hour = (uint8_t)hour;
+      schedule_minute = (uint8_t)minute;
+      EEPROM.write(EEPROM_ADDR_SCHEDULE_HOUR, schedule_hour);
+      EEPROM.write(EEPROM_ADDR_SCHEDULE_MINUTE, schedule_minute);
+      EEPROM.commit();
+      delay(10);
+      LogInfo("Pump schedule set to %02d:%02d", schedule_hour, schedule_minute);
+      response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    }
+    setSendTelemetryNow();
   }
   else
   {
@@ -475,23 +460,17 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
   rc = az_json_writer_append_int32(&jw, pump_run_duration_ms / 1000);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunDurationSecs value.");
 
-  // Pump interval (hours)
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpRunIntervalHours"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours.");
-  rc = az_json_writer_append_int32(&jw, pump_run_interval_secs / 3600);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours value.");
-
-  // Water level (%)
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("waterLevelPercent"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelPercent.");
-  rc = az_json_writer_append_int32(&jw, water_level_percent);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelPercent value.");
-
-  // Water level distance (cm)
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("waterLevelDistCm"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelDistCm.");
-  rc = az_json_writer_append_double(&jw, water_level_cm, 1);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding waterLevelDistCm value.");
+  // Pump schedule
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpSchedule"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpSchedule.");
+  if (schedule_hour == 0xFF) {
+    rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR("Disabled"));
+  } else {
+    char schedule_buf[6];
+    snprintf(schedule_buf, sizeof(schedule_buf), "%02d:%02d", schedule_hour, schedule_minute);
+    rc = az_json_writer_append_string(&jw, az_span_create((uint8_t*)schedule_buf, strlen(schedule_buf)));
+  }
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpSchedule value.");
 
   rc = az_json_writer_append_end_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing telemetry json payload.");
@@ -575,11 +554,6 @@ static int generate_device_info_payload(az_iot_hub_client const* hub_client, uin
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunDurationSecs.");
   rc = az_json_writer_append_int32(&jw, pump_run_duration_ms / 1000);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunDurationSecs value.");
-
-  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("pumpRunIntervalHours"));
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours.");
-  rc = az_json_writer_append_int32(&jw, pump_run_interval_secs / 3600);
-  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpRunIntervalHours value.");
 
   rc = az_iot_hub_client_properties_writer_end_component(hub_client, &jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing component object.");

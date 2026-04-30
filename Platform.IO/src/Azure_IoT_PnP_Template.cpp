@@ -17,12 +17,17 @@
 
 // EEPROM for storing persistent settings
 #include <EEPROM.h>
-#define EEPROM_SIZE 25
+#define EEPROM_SIZE 30
 #define EEPROM_ADDR_LAST_WATERED_TIME 5       // 4 bytes (address 5-8)
 #define EEPROM_ADDR_PUMP_DURATION 10          // 4 bytes (address 10-13), stored in milliseconds
 #define EEPROM_ADDR_SCHEDULE_HOUR 18          // 1 byte (0-23, 0xFF = disabled)
 #define EEPROM_ADDR_SCHEDULE_MINUTE 19        // 1 byte (0-59)
 #define EEPROM_ADDR_LAST_SCHEDULE_DAY 20      // 1 byte (1-31, day of month when schedule last ran)
+#define EEPROM_ADDR_SCHEDULE_INTERVAL 21      // 1 byte (1-30, days between runs, default 1)
+#define EEPROM_ADDR_LAST_SCHEDULE_EPOCH 22    // 4 bytes (address 22-25), epoch time of last schedule trigger
+#define EEPROM_ADDR_ADDITIONAL_SCHEDULE_HOUR 26     // 1 byte (0-23, 0xFF = disabled)
+#define EEPROM_ADDR_ADDITIONAL_SCHEDULE_MINUTE 27   // 1 byte (0-59)
+#define EEPROM_ADDR_LAST_ADDITIONAL_SCHEDULE_DAY 28  // 1 byte (1-31, day of month when additional schedule last ran)
 
 /* --- Defines --- */
 #define AZURE_PNP_MODEL_ID "dtmi:azureiot:devkit:freertos:PlantsBuddy;1"
@@ -52,6 +57,8 @@ static az_span COMMAND_NAME_DISPLAY_TEXT = AZ_SPAN_FROM_STR("DisplayText");
 static az_span COMMAND_NAME_SET_PUMP_DURATION = AZ_SPAN_FROM_STR("SetPumpDuration");
 static az_span COMMAND_NAME_TRIGGER_PUMP = AZ_SPAN_FROM_STR("TriggerPump");
 static az_span COMMAND_NAME_SET_PUMP_SCHEDULE = AZ_SPAN_FROM_STR("SetPumpSchedule");
+static az_span COMMAND_NAME_SET_PUMP_SCHEDULE_INTERVAL = AZ_SPAN_FROM_STR("SetPumpScheduleInterval");
+static az_span COMMAND_NAME_SET_ADDITIONAL_PUMP_SCHEDULE = AZ_SPAN_FROM_STR("SetAdditionalPumpSchedule");
 #define COMMAND_RESPONSE_CODE_ACCEPTED                 202
 #define COMMAND_RESPONSE_CODE_REJECTED                 404
 
@@ -102,6 +109,12 @@ static volatile bool triggerPumpRequested = false;
 static uint8_t schedule_hour = 6;       // 0xFF = disabled, 0-23 = enabled
 static uint8_t schedule_minute = 0;        // 0-59
 static int last_schedule_trigger_day = -1; // Day of month when schedule last triggered (prevents re-trigger)
+static uint8_t schedule_interval_days = 1; // 1-30, run every N days (1 = daily)
+static unsigned long last_schedule_epoch = 0; // Epoch time of last schedule trigger
+// --- Additional Pump Schedule --- //
+static uint8_t additional_schedule_hour = 0xFF;      // 0xFF = disabled, 0-23 = enabled
+static uint8_t additional_schedule_minute = 0;       // 0-59
+static int last_additional_schedule_trigger_day = -1; // Day of month when additional schedule last triggered
 
 /* --- Function Prototypes --- */
 static int generate_telemetry_payload(
@@ -160,6 +173,40 @@ static void readPumpScheduleFromEEPROM(){
     last_schedule_trigger_day = stored_day;
     LogInfo("Last schedule trigger day [From EEPROM]: %d", last_schedule_trigger_day);
   }
+  // Restore schedule interval
+  uint8_t stored_interval = EEPROM.read(EEPROM_ADDR_SCHEDULE_INTERVAL);
+  if (stored_interval >= 1 && stored_interval <= 30) {
+    schedule_interval_days = stored_interval;
+  } else {
+    schedule_interval_days = 1;
+    EEPROM.write(EEPROM_ADDR_SCHEDULE_INTERVAL, schedule_interval_days);
+    EEPROM.commit();
+  }
+  LogInfo("Pump schedule interval [From EEPROM]: every %d day(s)", schedule_interval_days);
+  // Restore last schedule epoch
+  unsigned long stored_epoch;
+  EEPROM.get(EEPROM_ADDR_LAST_SCHEDULE_EPOCH, stored_epoch);
+  if (stored_epoch > 1510592825UL) { // sanity: after Nov 2017
+    last_schedule_epoch = stored_epoch;
+    LogInfo("Last schedule epoch [From EEPROM]: %lu", last_schedule_epoch);
+  }
+  // Restore additional schedule
+  uint8_t stored_hour2 = EEPROM.read(EEPROM_ADDR_ADDITIONAL_SCHEDULE_HOUR);
+  uint8_t stored_minute2 = EEPROM.read(EEPROM_ADDR_ADDITIONAL_SCHEDULE_MINUTE);
+  if (stored_hour2 <= 23 && stored_minute2 <= 59) {
+    additional_schedule_hour = stored_hour2;
+    additional_schedule_minute = stored_minute2;
+    LogInfo("Additional pump schedule [From EEPROM]: %02d:%02d", additional_schedule_hour, additional_schedule_minute);
+  } else {
+    additional_schedule_hour = 0xFF; // disabled
+    additional_schedule_minute = 0;
+    LogInfo("Additional pump schedule [From EEPROM]: disabled");
+  }
+  uint8_t stored_day2 = EEPROM.read(EEPROM_ADDR_LAST_ADDITIONAL_SCHEDULE_DAY);
+  if (stored_day2 >= 1 && stored_day2 <= 31) {
+    last_additional_schedule_trigger_day = stored_day2;
+    LogInfo("Last additional schedule trigger day [From EEPROM]: %d", last_additional_schedule_trigger_day);
+  }
 }
 
 const az_span azure_pnp_get_model_id()
@@ -206,26 +253,55 @@ void setSendTelemetryNow(){
 }
 
 static void checkPumpSchedule() {
-  if (schedule_hour == 0xFF) return; // Schedule disabled
+  if (schedule_hour == 0xFF && additional_schedule_hour == 0xFF) return; // Both schedules disabled
 
   time_t now = time(NULL);
   struct tm* timeinfo = localtime(&now);
   if (timeinfo == NULL) return;
 
-  // Already triggered today
-  if (timeinfo->tm_mday == last_schedule_trigger_day) return;
-
-  // Current time is at or past the scheduled time -> trigger
+  int today = timeinfo->tm_mday;
   int current_minutes = timeinfo->tm_hour * 60 + timeinfo->tm_min;
-  int schedule_minutes = schedule_hour * 60 + schedule_minute;
 
-  if (current_minutes >= schedule_minutes) {
-    last_schedule_trigger_day = timeinfo->tm_mday;
-    EEPROM.write(EEPROM_ADDR_LAST_SCHEDULE_DAY, (uint8_t)last_schedule_trigger_day);
-    EEPROM.commit();
-    triggerPumpRequested = true;
-    LogInfo("Scheduled pump trigger at %02d:%02d (current %02d:%02d).", 
-      schedule_hour, schedule_minute, timeinfo->tm_hour, timeinfo->tm_min);
+  // Determine if today is a valid watering day (interval check)
+  // Skip interval check if any schedule already triggered today (we're on a valid day)
+  bool any_triggered_today = (today == last_schedule_trigger_day) || (today == last_additional_schedule_trigger_day);
+  if (!any_triggered_today && last_schedule_epoch > 0 && schedule_interval_days > 1) {
+    unsigned long secs_since_last = (unsigned long)now - last_schedule_epoch;
+    unsigned long required_secs = (unsigned long)(schedule_interval_days - 1) * 86400UL;
+    if (secs_since_last < required_secs) return; // Not enough days elapsed
+  }
+
+  // Check schedule 1
+  if (schedule_hour != 0xFF && today != last_schedule_trigger_day) {
+    int schedule_minutes = schedule_hour * 60 + schedule_minute;
+    if (current_minutes >= schedule_minutes) {
+      last_schedule_trigger_day = today;
+      last_schedule_epoch = (unsigned long)now;
+      EEPROM.write(EEPROM_ADDR_LAST_SCHEDULE_DAY, (uint8_t)today);
+      EEPROM.put(EEPROM_ADDR_LAST_SCHEDULE_EPOCH, last_schedule_epoch);
+      EEPROM.commit();
+      triggerPumpRequested = true;
+      LogInfo("Scheduled pump trigger (schedule 1) at %02d:%02d (current %02d:%02d), interval: every %d day(s).",
+        schedule_hour, schedule_minute, timeinfo->tm_hour, timeinfo->tm_min, schedule_interval_days);
+    }
+  }
+
+  // Check additional schedule
+  if (additional_schedule_hour != 0xFF && today != last_additional_schedule_trigger_day) {
+    int additional_schedule_minutes = additional_schedule_hour * 60 + additional_schedule_minute;
+    if (current_minutes >= additional_schedule_minutes) {
+      last_additional_schedule_trigger_day = today;
+      // Only update epoch if schedule 1 hasn't already updated it today
+      if (today != last_schedule_trigger_day) {
+        last_schedule_epoch = (unsigned long)now;
+        EEPROM.put(EEPROM_ADDR_LAST_SCHEDULE_EPOCH, last_schedule_epoch);
+      }
+      EEPROM.write(EEPROM_ADDR_LAST_ADDITIONAL_SCHEDULE_DAY, (uint8_t)today);
+      EEPROM.commit();
+      triggerPumpRequested = true;
+      LogInfo("Scheduled pump trigger (additional) at %02d:%02d (current %02d:%02d), interval: every %d day(s).",
+        additional_schedule_hour, additional_schedule_minute, timeinfo->tm_hour, timeinfo->tm_min, schedule_interval_days);
+    }
   }
 }
 
@@ -408,6 +484,59 @@ int azure_pnp_handle_command_request(azure_iot_t* azure_iot, command_request_t c
     }
     setSendTelemetryNow();
   }
+  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_SET_PUMP_SCHEDULE_INTERVAL))
+  {
+    char* parse_string = (char*)az_span_ptr(command.payload);
+    parse_string[az_span_size(command.payload)] = '\0';
+    int interval = atoi(parse_string);
+    if (interval < 1 || interval > 30) {
+      LogError("Invalid schedule interval: %d (must be 1-30 days)", interval);
+      response_code = COMMAND_RESPONSE_CODE_REJECTED;
+      return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid interval (1-30 days)"));
+    }
+    schedule_interval_days = (uint8_t)interval;
+    EEPROM.write(EEPROM_ADDR_SCHEDULE_INTERVAL, schedule_interval_days);
+    EEPROM.commit();
+    delay(10);
+    LogInfo("Pump schedule interval set to every %d day(s)", schedule_interval_days);
+    response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    setSendTelemetryNow();
+  }
+  else if (az_span_is_content_equal(command.command_name, COMMAND_NAME_SET_ADDITIONAL_PUMP_SCHEDULE))
+  {
+    // SetAdditionalPumpSchedule: payload is HHMM format (e.g., 1830 = 6:30 PM, -1 = disable)
+    char* parse_string = (char*)az_span_ptr(command.payload);
+    parse_string[az_span_size(command.payload)] = '\0';
+    int value = atoi(parse_string);
+    if (value < 0) {
+      // Disable additional schedule
+      additional_schedule_hour = 0xFF;
+      additional_schedule_minute = 0;
+      EEPROM.write(EEPROM_ADDR_ADDITIONAL_SCHEDULE_HOUR, 0xFF);
+      EEPROM.write(EEPROM_ADDR_ADDITIONAL_SCHEDULE_MINUTE, 0);
+      EEPROM.commit();
+      delay(10);
+      LogInfo("Additional pump schedule disabled.");
+      response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    } else {
+      int hour = value / 100;
+      int minute = value % 100;
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        LogError("Invalid additional schedule: %d (use HHMM, e.g. 1830 for 18:30)", value);
+        response_code = COMMAND_RESPONSE_CODE_REJECTED;
+        return azure_iot_send_command_response(azure_iot, command.request_id, response_code, AZ_SPAN_LITERAL_FROM_STR("Invalid time (HHMM format)"));
+      }
+      additional_schedule_hour = (uint8_t)hour;
+      additional_schedule_minute = (uint8_t)minute;
+      EEPROM.write(EEPROM_ADDR_ADDITIONAL_SCHEDULE_HOUR, additional_schedule_hour);
+      EEPROM.write(EEPROM_ADDR_ADDITIONAL_SCHEDULE_MINUTE, additional_schedule_minute);
+      EEPROM.commit();
+      delay(10);
+      LogInfo("Additional pump schedule set to %02d:%02d", additional_schedule_hour, additional_schedule_minute);
+      response_code = COMMAND_RESPONSE_CODE_ACCEPTED;
+    }
+    setSendTelemetryNow();
+  }
   else
   {
     LogError("Command not recognized (%.*s).", az_span_size(command.command_name), az_span_ptr(command.command_name));
@@ -471,6 +600,24 @@ static int generate_telemetry_payload(uint8_t* payload_buffer, size_t payload_bu
     rc = az_json_writer_append_string(&jw, az_span_create((uint8_t*)schedule_buf, strlen(schedule_buf)));
   }
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding pumpSchedule value.");
+
+  // Additional pump schedule
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("additionalPumpSchedule"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding additionalPumpSchedule.");
+  if (additional_schedule_hour == 0xFF) {
+    rc = az_json_writer_append_string(&jw, AZ_SPAN_FROM_STR("Disabled"));
+  } else {
+    char additional_schedule_buf[6];
+    snprintf(additional_schedule_buf, sizeof(additional_schedule_buf), "%02d:%02d", additional_schedule_hour, additional_schedule_minute);
+    rc = az_json_writer_append_string(&jw, az_span_create((uint8_t*)additional_schedule_buf, strlen(additional_schedule_buf)));
+  }
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding additionalPumpSchedule value.");
+
+  // Pump schedule interval (days)
+  rc = az_json_writer_append_property_name(&jw, AZ_SPAN_FROM_STR("scheduleIntervalDays"));
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding scheduleIntervalDays.");
+  rc = az_json_writer_append_int32(&jw, schedule_interval_days);
+  EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed adding scheduleIntervalDays value.");
 
   rc = az_json_writer_append_end_object(&jw);
   EXIT_IF_AZ_FAILED(rc, RESULT_ERROR, "Failed closing telemetry json payload.");
